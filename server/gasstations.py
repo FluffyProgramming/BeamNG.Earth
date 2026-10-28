@@ -281,15 +281,21 @@ def _named(b, st):
 def find_shop(st, blds):
     """The station's shop: among the buildings (not roofs) within SHOP_SEARCH_M of the station, one named like the
     station, else the nearest a mapper drew, else the nearest imagery outline (one of those next to a station is often
-    its canopy: a Sunoco near Pittsburgh, its pin on the road, 2026-10-23); None without one."""
+    its canopy: a Sunoco near Pittsburgh, its pin on the road, 2026-10-23); None without one. With none by its centre, a
+    building whose nearest wall is within SHOP_SEARCH_M (a travel centre's store: the Buc-ee's at Mount Crawford,
+    Virginia, its pin on the forecourt 39 m from the store's wall, 74 m from its centre, was two small pump pairs; the
+    user, 2026-10-27)."""
     p = np.array([st.x, st.y])
-    near = []
+    near, by_wall = [], []
     for b in blds:
         if b.cls in ROOF_CLASSES or b.cls in NOT_SHOP_CLASSES:
             continue
         d = float(np.hypot(*(_centre(b.ring) - p)))
         if d <= SHOP_SEARCH_M:
             near.append((not _named(b, st), b.src in ML_SOURCES, d, b.id, b))
+        elif not near and float(_seg_dist(p[None], b.ring[:-1], b.ring[1:])[0]) <= SHOP_SEARCH_M:
+            by_wall.append((not _named(b, st), b.src in ML_SOURCES, d, b.id, b))
+    near = near or by_wall
     return min(near, key=lambda r: r[:4])[4] if near else None
 
 
@@ -1728,14 +1734,33 @@ def _pad_ll(polys, frame):
 
 def _one_per_shop(sites):
     """The sites kept: one forecourt per shop and per canopy, a confirmed station first (the same wherever they are
-    all laid out: every road tile)."""
-    shops, canopies = set(), set()
-    for site in sorted(sites, key=lambda s: (not s.station.confirmed, s.station.id)):
+    all laid out: every road tile). A station laid out at its pin (no shop of its own: "pin:") with a kept station's
+    brand within PIN_SAME_M of it, or its pumps on any kept station's forecourt, is left out: that station's other pin
+    (the Buc-ee's at Mount Crawford, Virginia: a second pin 96 m from the first, on the same huge lot, was its own pump
+    pair; the user, 2026-10-27). Another brand there (a Shell across the street) stays."""
+    import polygon
+    shops, canopies, pads = set(), set(), []
+    sites = sorted(sites, key=lambda s: (s.shop_id.startswith("pin:"), not s.station.confirmed, s.station.id))
+    for site in sites:
         if site.shop_id in shops or canopies.intersection(site.drop_ids):
             continue
+        if site.shop_id.startswith("pin:") and site.areas:
+            pts = np.array([[a["x"], a["y"]] for a in site.areas], np.float64)
+            words = _tokens(site.station.name + " " + site.station.brand) - GENERIC_WORDS
+            here = np.array([site.station.x, site.station.y])
+            if any(polygon.contains_points(np.vstack([p, p[:1]]), pts).any() for p, _, _ in pads) or any(
+                    words & w and float(np.hypot(*(here - at))) <= PIN_SAME_M for _, w, at in pads):
+                continue
         shops.add(site.shop_id)
         canopies.update(site.drop_ids)
+        words = _tokens(site.station.name + " " + site.station.brand) - GENERIC_WORDS
+        at = np.array([site.station.x, site.station.y])
+        pads.extend((np.asarray(p, np.float64), words, at) for p in (site.pad or [np.zeros((0, 2))]))
         yield site
+
+
+PIN_SAME_M = 120.0      # a pin's pump pair this near a station of its brand that has a shop is that station's other pin
+                        # (a travel centre's lot: the Buc-ee's at Mount Crawford, its two pins 96 m apart)
 
 
 PARK_CLEAR_M = 3.0      # a parked car's spot centre this far from every refuel area's edge and every prop

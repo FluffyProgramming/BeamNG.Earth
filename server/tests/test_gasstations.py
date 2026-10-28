@@ -660,6 +660,40 @@ class LayoutTest(unittest.TestCase):
         tight = [rect("w", -16.0, 25.0, 10.0, 30.0, cls="apartments"), rect("e", 16.0, 25.0, 10.0, 30.0, cls="apartments")]
         self.assertEqual(gs.layout(en, [bld] + tight, ROAD).drop_ids, ("bld",))
 
+    def test_big_shop_by_its_wall(self):
+        # (the user, 2026-10-27: the Buc-ee's at Mount Crawford, Virginia, laid out as two small pump pairs) its pin on
+        # the forecourt, 39 m from the store's wall but 74 m from its centre (a 7672 m2 store): the shop is a building
+        # within SHOP_SEARCH_M of the pin by its nearest wall, not its centre
+        st = gs.Station("st", 0.0, 0.0, "Buc-ee's", "Buc-ee's", ("p",), True, True)
+        store = rect("store", 0.0, 74.0, 110.0, 70.0, cls="retail")            # its south wall at y = 39
+        self.assertIs(gs.find_shop(st, [store]), store)
+        # nearer centres still come first (a station that has a shop keeps it)
+        kiosk = rect("kiosk", 20.0, 0.0, 8.0, 6.0, cls="retail")
+        self.assertIs(gs.find_shop(st, [store, kiosk]), kiosk)
+
+    def test_pin_pair_inside_another_forecourt_dropped(self):
+        # (the Buc-ee's at Mount Crawford: a second pin 96 m from the first, out on the same forecourt, laid out as its
+        # own little pump pair in the travel centre's lot) a station laid out at its pin, with no shop of its own, whose
+        # pumps are on another station's forecourt is that station
+        big = gs.Station("big", 0.0, 0.0, "Buc-ee's", "Buc-ee's", ("a",), True, True)
+        small = gs.Station("small", 30.0, 0.0, "Buc-ee's", "Buc-ee's", ("b",), True, True)
+        pad = [np.array([(-60.0, -40.0), (60.0, -40.0), (60.0, 40.0), (-60.0, 40.0)])]
+        sb = gs.Site(big, [], [dict(x=0.0, y=0.0)], ("roof",), shop_id="store", pad=pad)
+        ss = gs.Site(small, [], [dict(x=30.0, y=0.0), dict(x=35.0, y=0.0)], (), shop_id="pin:small", pad=[])
+        kept = list(gs._one_per_shop([ss, sb]))
+        self.assertEqual([k.station.id for k in kept], ["big"])
+        # (the real one: the second pin 96 m from the first, its pumps 93 m off the travel centre's pad) the same lot
+        beside = gs.Site(gs.Station("small", 96.0, 0.0, "Buc-ee's", "Buc-ee's", ("b",), True, True), [],
+                         [dict(x=150.0, y=-50.0)], (), shop_id="pin:small", pad=[])
+        self.assertEqual([k.station.id for k in gs._one_per_shop([beside, sb])], ["big"])
+        # another brand beside it (a Shell across the street), or the same brand far off: kept
+        shell = gs.Site(gs.Station("shell", 85.0, 0.0, "Shell", "Shell", ("c",), True, True), [], [dict(x=85.0, y=0.0)],
+                        (), shop_id="pin:shell", pad=[])
+        self.assertEqual(sorted(k.station.id for k in gs._one_per_shop([shell, sb])), ["big", "shell"])
+        far = gs.Site(gs.Station("small", 300.0, 0.0, "Buc-ee's", "Buc-ee's", ("b",), True, True), [],
+                      [dict(x=300.0, y=0.0)], (), shop_id="pin:small", pad=[])
+        self.assertEqual(sorted(k.station.id for k in gs._one_per_shop([far, sb])), ["big", "small"])
+
     def test_fuel_named(self):
         for t in ("Pemex", "BR", "Ipiranga", "Gasolineria San Jeronimo", "ENEOS Dr.Drive 梅田店", "Jx日鉱日石リテールサービス",
                   "北海道エネルギー 札幌大通Ss", "西新橋SS", "Agip Service-Station", "Esso", "Posto de Gasolina Ruckert"):
