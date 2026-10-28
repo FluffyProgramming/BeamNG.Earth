@@ -670,6 +670,12 @@ class LayoutTest(unittest.TestCase):
         # nearer centres still come first (a station that has a shop keeps it)
         kiosk = rect("kiosk", 20.0, 0.0, 8.0, 6.0, cls="retail")
         self.assertIs(gs.find_shop(st, [store, kiosk]), kiosk)
+        # (the 968-station comparison: 8 pin-only stations got a neighbour's ordinary building this way) only a travel
+        # centre's store, TRAVEL_STORE_M2 or more, by its wall
+        shed = rect("shed", 0.0, 74.0, 40.0, 70.0, cls="retail")              # 2800 m2, its wall at y = 39
+        small = rect("small", 0.0, 64.0, 30.0, 50.0, cls="retail")             # 1500 m2, its wall at y = 39
+        self.assertIsNone(gs.find_shop(st, [small]))
+        self.assertIs(gs.find_shop(st, [shed]), shed)
 
     def test_pin_pair_inside_another_forecourt_dropped(self):
         # (the Buc-ee's at Mount Crawford: a second pin 96 m from the first, out on the same forecourt, laid out as its

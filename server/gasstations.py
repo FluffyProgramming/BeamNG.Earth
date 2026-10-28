@@ -278,11 +278,15 @@ def _named(b, st):
     return bool(words) and bool(_tokens(b.name) & words)
 
 
+TRAVEL_STORE_M2 = 2000.0    # a shop this big may be found by its wall (find_shop): a travel centre's store
+
+
 def find_shop(st, blds):
     """The station's shop: among the buildings (not roofs) within SHOP_SEARCH_M of the station, one named like the
     station, else the nearest a mapper drew, else the nearest imagery outline (one of those next to a station is often
     its canopy: a Sunoco near Pittsburgh, its pin on the road, 2026-10-23); None without one. With none by its centre, a
-    building whose nearest wall is within SHOP_SEARCH_M (a travel centre's store: the Buc-ee's at Mount Crawford,
+    travel centre's store (TRAVEL_STORE_M2 or more: an ordinary building near a pin-only station is a neighbour's) whose
+    nearest wall is within SHOP_SEARCH_M (the Buc-ee's at Mount Crawford,
     Virginia, its pin on the forecourt 39 m from the store's wall, 74 m from its centre, was two small pump pairs; the
     user, 2026-10-27)."""
     p = np.array([st.x, st.y])
@@ -293,7 +297,8 @@ def find_shop(st, blds):
         d = float(np.hypot(*(_centre(b.ring) - p)))
         if d <= SHOP_SEARCH_M:
             near.append((not _named(b, st), b.src in ML_SOURCES, d, b.id, b))
-        elif not near and float(_seg_dist(p[None], b.ring[:-1], b.ring[1:])[0]) <= SHOP_SEARCH_M:
+        elif (not near and _area(b.ring) >= TRAVEL_STORE_M2
+              and float(_seg_dist(p[None], b.ring[:-1], b.ring[1:])[0]) <= SHOP_SEARCH_M):
             by_wall.append((not _named(b, st), b.src in ML_SOURCES, d, b.id, b))
     near = near or by_wall
     return min(near, key=lambda r: r[:4])[4] if near else None
