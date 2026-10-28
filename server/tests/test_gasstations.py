@@ -672,9 +672,13 @@ class LayoutTest(unittest.TestCase):
                   "Neste", "OKQ8", "Preem", "St1", "Uno-X", "Petrom", "Rompetrol", "Slovnaft", "Benzina", "INA",
                   "Petrol Ofisi", "Opet", "Tamoil", "WOG", "OKKO", "SOCAR", "čerpací stanice", "huoltoasema", "bensinstasjon",
                   "Πρατήριο καυσίμων", "akaryakıt istasyonu", "stacja paliw Lotos", "benzinkút", "ÖMV", "Q8", "Teboil",
-                  "Α.Π. Βενζινάδικο", "Jetoil", "Silkoil", "Elin", "Ελιν", "EKO", "Aegean", "Revoil", "PRIO", "Retitalia"):
+                  "Α.Π. Βενζινάδικο", "Jetoil", "Silkoil", "Elin", "Ελιν", "EKO", "Aegean", "Revoil", "PRIO", "Retitalia",
+                  # (coverage, 2026-10-27: real stations the wider search missed on their names alone)
+                  "IP", "IP API", "Keropetrol", "STOM", "Rubis", "Amoco", "Atlantsolía", "Turmöl", "OZ Energia", "PT",
+                  "ENEOSフロンティア Dr.Driveセルフ那の川店", "エザキ株式会社-セルフＲ153日進店", "123tanken.at"):
             self.assertTrue(gs._fuel_named(t), t)
-        for t in ("Почта России", "Molly's Pub", "Inazuma", "Circle Kitchen", "Renault", "Garagem Manique", "Neste Oyj headquarters office"[:4] + "rov"):
+        for t in ("Почта России", "Molly's Pub", "Inazuma", "Circle Kitchen", "Renault", "Garagem Manique", "Iptv Shop",
+                  "Apidae", "PTA Office", "Stomatology", "Neste Oyj headquarters office"[:4] + "rov"):
             self.assertFalse(gs._fuel_named(t), t)
 
     def test_no_shop_no_site(self):

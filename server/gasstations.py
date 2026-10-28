@@ -1352,14 +1352,16 @@ ONE_BLD_ROAD_M = ONE_BLD_CLEAR_M + 2.0      # a side whose middle a road's edge 
 # a fuel station's name (as well as STATION_WORDS): its brands and words in the map data's languages, whole words; a
 # Japanese service station's "SS" after its place name (南森町SS); never a bare "gas" (a union of gas fitters is no station).
 # Russia's, Eastern and Northern Europe's brands and words too (the user, 2026-10-27: "it needs to work for around the
-# world, we have players in Russia all over Europe")
-FUEL_WORDS = re.compile(r"\b(oil|petrol\w*|petro|gasolina|gasoline|service[- ]station|pemex|ipiranga|petrobras|br|ypf|"
+# world, we have players in Russia all over Europe"). A word ends where no Latin letter is next to it, not at \b, which
+# sees Japanese and digits as word (ENEOSフロンティア, 123tanken).
+FUEL_WORDS = re.compile(r"(?<![A-Za-z])(oil|petrol\w*|petro|gasolina|gasoline|service[- ]station|pemex|ipiranga|petrobras|br|ypf|"
                         r"repsol|galp|cepsa|moeve|q8|omv|ömv|lukoil|rosneft|gazprom\w*|tatneft|bashneft|petronas|caltex|"
                         r"ampol|engen|sasol|puma|kobil|hidrosina|cosmo|idemitsu|apollostation|eneos|ptt|orlen|lotos|mol|"
                         r"circle k|neste|okq8|preem|st1|uno-x|ingo|statoil|teboil|petrom|rompetrol|slovnaft|benzina|ina|"
                         r"opet|tamoil|wog|okko|socar|čerpací stanice|benzinárna|huoltoasema|bensinstasjon|bensinstation|"
-                        r"akaryakıt|jetoil|silkoil|revoil|elin|eko|aegean|avin|prio|retitalia)\b|"
-                        r"石油|日石|ガソリン|スタンド|エネオス|コスモ|出光|ปตท|азс|агзс|заправ|нефт|бензин|лукойл|"
+                        r"akaryakıt|jetoil|silkoil|revoil|elin|eko|aegean|avin|prio|retitalia|ip|api|keropetrol|stom|"
+                        r"rubis|amoco|atlantsol[ií]a|turm[öo]l|oz energia|pt|tanken)(?![A-Za-z])|"
+                        r"石油|日石|ガソリン|スタンド|エネオス|コスモ|出光|セルフ|ปตท|азс|агзс|заправ|нефт|бензин|лукойл|"
                         r"καυσίμ|πρατήριο|βενζιν|ελιν",
                         re.IGNORECASE)
 SS_WORD = re.compile(r"(?<![A-Za-z])(SS|Ss|ＳＳ)(?![A-Za-z])")
