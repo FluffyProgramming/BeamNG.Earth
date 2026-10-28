@@ -662,10 +662,12 @@ def _wide_pair_site(st, shop, blds, roads, kit=None):
     WIDE_STEP_M grid, nearest to the shop first (else to the pin), each pair facing its own nearest road and clear as
     _pair_site's (_clear), with no building between it and that road (_walled), never behind the shop's back wall
     (its front: toward its nearest road), on its own lot (nearer the shop than any other building: _own_lot) and
-    not across a public road from the shop (or the pin). Only for a station sure enough for
-    pumps without a canopy to show it: a gas station (st.confirmed) with a current record (st.trusted), named for fuel
-    (_fuel_named) and no EV charger (_is_ev); else None (the 40 m reach would put pumps by an office filed as a gas
-    station, or by a charger: phase two's EV part)."""
+    not across a public road from the shop (or the pin). Only for a station sure enough for pumps without a canopy to
+    show it: a gas station (st.confirmed) with a current record (st.trusted), named for fuel (_fuel_named) and no EV
+    charger (_is_ev); else None (the 40 m reach would put pumps by an office filed as a gas station, or by a charger:
+    phase two's EV part). The candidates are screened together on a raster of the obstacles (_obstacle_raster: a
+    failing search tried every one, 38 -> 221 ms of layouts a road tile in Athens), and only the ones left are checked
+    exactly, in order."""
     if not (st.confirmed and st.trusted and (_fuel_named(st.name) or _fuel_named(st.brand)))             or _is_ev(st.name) or _is_ev(st.brand):
         return None
     kit = kit or PUMP_KIT
@@ -680,8 +682,24 @@ def _wide_pair_site(st, shop, blds, roads, kit=None):
     cand = pin + np.stack(np.meshgrid(g, g), -1).reshape(-1, 2)
     cand = cand[np.hypot(*(cand - pin).T) <= WIDE_REACH_M]
     cand = cand[np.argsort(np.hypot(*(cand - sc).T), kind="stable")]
+    # each candidate's nearest road point (all segments at once, in chunks)
+    A = np.concatenate([ln[:-1] for ln, _ in near_roads]); B = np.concatenate([ln[1:] for ln, _ in near_roads])
+    D = B - A
+    L2 = np.maximum((D * D).sum(1), 1e-12)
+    q = np.empty_like(cand); dq = np.empty(len(cand))
+    for i in range(0, len(cand), 256):
+        c = cand[i:i + 256]
+        t = np.clip(((c[:, None, :] - A[None]) * D[None]).sum(2) / L2[None], 0.0, 1.0)
+        Q = A[None] + D[None] * t[:, :, None]
+        dist = np.hypot(*(Q - c[:, None, :]).transpose(2, 0, 1))
+        k = dist.argmin(1)
+        q[i:i + 256] = Q[np.arange(len(c)), k]; dq[i:i + 256] = dist[np.arange(len(c)), k]
+    ok = dq >= 1.0
+    av = (q - cand) / np.maximum(dq, 1e-9)[:, None]
+    rv = np.stack([-av[:, 1], av[:, 0]], 1)
     gr, ga = np.meshgrid(np.linspace(-PAIR_HALF[0], PAIR_HALF[0], 11), np.linspace(-PAIR_HALF[1], PAIR_HALF[1], 9))
     grid = np.c_[gr.ravel(), ga.ravel()]
+    foot = cand[:, None, :] + grid[None, :, :1] * rv[:, None, :] + grid[None, :, 1:] * av[:, None, :]    # (N, 99, 2)
     front, back = None, 0.0
     if shop is not None:                        # (its front: toward its nearest road; nothing behind its back wall)
         q0, d0, _ = _nearest_on(near_roads, sc)
@@ -689,21 +707,54 @@ def _wide_pair_site(st, shop, blds, roads, kit=None):
             front = (q0 - sc) / d0
             _, su, shl, shw = _obox(shop.ring)
             back = -float(abs(su @ front) * shl + abs(su[0] * front[1] - su[1] * front[0]) * shw)
-    for c in cand:
-        q, d, _ = _nearest_on(near_roads, c)
-        if q is None or d < 1.0:
+            ok &= ((foot - sc) @ front).min(1) >= back
+    blocked, o, res = _obstacle_raster(pin, R, blds, near_roads)
+    ij = np.floor((foot - o) / res).astype(np.int64)
+    inside = ((ij >= 0) & (ij < blocked.shape[0])).all(2)
+    ij = np.clip(ij, 0, blocked.shape[0] - 1)
+    ok &= inside.all(1) & ~blocked[ij[..., 1], ij[..., 0]].any(1)
+    for i in np.flatnonzero(ok):
+        c, qi, a, r = cand[i], q[i], av[i], rv[i]
+        if not _clear(foot[i], blds, near_roads):
             continue
-        a = (q - c) / d
-        r = np.array([-a[1], a[0]])
-        foot = c + grid[:, :1] * r + grid[:, 1:] * a
-        if front is not None and float(((foot - sc) @ front).min()) < back:
-            continue
-        if not _clear(foot, blds, near_roads):
-            continue
-        if _across(sc, c, roads) or _walled(c, q, blds) or (shop is not None and not _own_lot(c, shop, blds)):
+        if _across(sc, c, roads) or _walled(c, qi, blds) or (shop is not None and not _own_lot(c, shop, blds)):
             continue
         return _pair_at(st, c, a, r, kit)
     return None
+
+
+def _obstacle_raster(pin, R, blds, roads, res=0.5):
+    """(blocked (n, n) bool [row y, col x], origin, res): the cells around pin (R each way) a pump pair's footprint may
+    not touch, conservatively (each cell whose centre is within the clearance plus 0.75 res: no point of it can be in
+    a building, within BLD_CLEAR_M of one, or within ROAD_CLEAR_M of a carriageway). _clear has the last word."""
+    import polygon
+    n = int(math.ceil(2 * R / res))
+    o = pin - R
+    xs = o[0] + (np.arange(n) + 0.5) * res
+    ys = o[1] + (np.arange(n) + 0.5) * res
+    blocked = np.zeros((n, n), bool)
+    slack = 0.75 * res
+
+    def mark(lo, hi, test):
+        i0, j0 = np.clip(np.floor((lo - o) / res).astype(int), 0, n - 1)
+        i1, j1 = np.clip(np.ceil((hi - o) / res).astype(int), 0, n - 1)
+        if i1 < i0 or j1 < j0:
+            return
+        X, Y = np.meshgrid(xs[i0:i1 + 1], ys[j0:j1 + 1])
+        pts = np.c_[X.ravel(), Y.ravel()]
+        hit = test(pts).reshape(X.shape)
+        blocked[j0:j1 + 1, i0:i1 + 1] |= hit
+    for b in blds:
+        m = BLD_CLEAR_M + slack
+        mark(b.ring.min(0) - m, b.ring.max(0) + m,
+             lambda p, b=b, m=m: polygon.contains_points(b.ring, p) | (_seg_dist(p, b.ring[:-1], b.ring[1:]) < m))
+    for ln, h in roads:
+        m = h + ROAD_CLEAR_M + slack
+        for k in range(len(ln) - 1):
+            a2, b2 = ln[k:k + 1], ln[k + 1:k + 2]
+            mark(np.minimum(a2[0], b2[0]) - m, np.maximum(a2[0], b2[0]) + m,
+                 lambda p, a2=a2, b2=b2, m=m: _seg_dist(p, a2, b2) < m)
+    return blocked, o, res
 
 
 def _own_lot(c, shop, blds):
