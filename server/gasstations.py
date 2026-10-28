@@ -631,18 +631,79 @@ def _pair_site(st, shop, blds, roads, kit=None, at_pin=False):
             c = sc + a * t + r * lat
             if not _clear(c + grid[:, :1] * r + grid[:, 1:] * a, blds, roads):
                 continue
-            props, areas = [], []
-            yaw = _yaw(r)                       # a pump's x along its row (fs_4)
-            for s in (-0.5, 0.5):
-                p = c + r * (s * PAIR_GAP_M)
-                _pump(props, areas, kit, float(p[0]), float(p[1]), yaw, 0.0)
-            for s in (-1.0, 1.0):
-                for o in (-0.3, 0.3):
-                    p = c + r * (s * (PAIR_GAP_M / 2 + 1.2)) + a * o
-                    props.append(dict(shape=BOLLARD, x=float(p[0]), y=float(p[1]), dz=0.0, yaw=_yaw(r) % 360.0,
-                                      scale=[1.5, 1.5, 1.0], collide=True))
-            return Site(st, props, areas, ())
+            return _pair_at(st, c, a, r, kit)
     return None
+
+
+def _pair_at(st, c, a, r, kit):
+    """The Site of a pump pair centred at c, its row along r, a toward its road: two pumps PAIR_GAP_M apart and a pair of
+    bollards at each end."""
+    props, areas = [], []
+    yaw = _yaw(r)                       # a pump's x along its row (fs_4)
+    for s in (-0.5, 0.5):
+        p = c + r * (s * PAIR_GAP_M)
+        _pump(props, areas, kit, float(p[0]), float(p[1]), yaw, 0.0)
+    for s in (-1.0, 1.0):
+        for o in (-0.3, 0.3):
+            p = c + r * (s * (PAIR_GAP_M / 2 + 1.2)) + a * o
+            props.append(dict(shape=BOLLARD, x=float(p[0]), y=float(p[1]), dz=0.0, yaw=_yaw(r) % 360.0,
+                              scale=[1.5, 1.5, 1.0], collide=True))
+    return Site(st, props, areas, ())
+
+
+# --- the wider pump-pair search (coverage, 2026-10-27: of the real stations missed, 123 of 131 had a shop, no canopy
+# and no room for a pair straight between the shop and its one nearest road; a search around the pin fits 90) ------
+WIDE_REACH_M = 40.0         # candidate pair centres this near the pin
+WIDE_STEP_M = 2.0           # ... on a grid this fine
+
+
+def _wide_pair_site(st, shop, blds, roads, kit=None):
+    """A pump pair anywhere open within WIDE_REACH_M of the pin, when _pair_site finds none: candidate centres on a
+    WIDE_STEP_M grid, nearest to the shop first (else to the pin), each pair facing its own nearest road and clear as
+    _pair_site's (_clear), with no building between it and that road (_walled), never across a public road from the
+    shop (or the pin). Only for a station sure enough for
+    pumps without a canopy to show it: a gas station (st.confirmed) with a current record (st.trusted), named for fuel
+    (_fuel_named) and no EV charger (_is_ev); else None (the 40 m reach would put pumps by an office filed as a gas
+    station, or by a charger: phase two's EV part)."""
+    if not (st.confirmed and st.trusted and (_fuel_named(st.name) or _fuel_named(st.brand)))             or _is_ev(st.name) or _is_ev(st.brand):
+        return None
+    kit = kit or PUMP_KIT
+    pin = np.array([st.x, st.y])
+    sc = _centre(shop.ring) if shop is not None else pin
+    R = WIDE_REACH_M + float(np.hypot(*PAIR_HALF)) + BLD_CLEAR_M
+    blds = [b for b in blds if (b.ring.max(0) >= pin - R).all() and (b.ring.min(0) <= pin + R).all()]
+    near_roads = [(ln, h) for ln, h in roads if _seg_dist(pin[None], ln[:-1], ln[1:])[0] <= R + h + ROAD_CLEAR_M + 60.0]
+    if not near_roads:
+        return None
+    g = np.arange(-WIDE_REACH_M, WIDE_REACH_M + 1e-9, WIDE_STEP_M)
+    cand = pin + np.stack(np.meshgrid(g, g), -1).reshape(-1, 2)
+    cand = cand[np.hypot(*(cand - pin).T) <= WIDE_REACH_M]
+    cand = cand[np.argsort(np.hypot(*(cand - sc).T), kind="stable")]
+    gr, ga = np.meshgrid(np.linspace(-PAIR_HALF[0], PAIR_HALF[0], 11), np.linspace(-PAIR_HALF[1], PAIR_HALF[1], 9))
+    grid = np.c_[gr.ravel(), ga.ravel()]
+    for c in cand:
+        q, d, _ = _nearest_on(near_roads, c)
+        if q is None or d < 1.0:
+            continue
+        a = (q - c) / d
+        r = np.array([-a[1], a[0]])
+        if not _clear(c + grid[:, :1] * r + grid[:, 1:] * a, blds, near_roads):
+            continue
+        if _across(sc, c, roads) or _walled(c, q, blds):
+            continue
+        return _pair_at(st, c, a, r, kit)
+    return None
+
+
+def _walled(c, q, blds):
+    """Whether a building stands on the straight way from c to its road's point q (pumps in a yard behind a block are
+    no forecourt)."""
+    import polygon
+    ts = np.linspace(0.0, 1.0, max(2, int(np.hypot(*(q - c)) / 1.0) + 1))
+    pts = c[None] + (q - c)[None] * ts[:, None]
+    lo, hi = pts.min(0), pts.max(0)
+    return any(polygon.contains_points(b.ring, pts).any() for b in blds
+               if (b.ring.max(0) >= lo).all() and (b.ring.min(0) <= hi).all())
 
 
 # --- stations by region (the user, 2026-10-23: "I want to use them based on region so we should take advantage of the

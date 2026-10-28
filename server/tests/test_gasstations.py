@@ -585,6 +585,54 @@ class LayoutTest(unittest.TestCase):
         for t in ("Shell", "BP", "Esso Express", "Tesla Motors service", "Charge's Garage", "ENEOS", "", None):
             self.assertFalse(gs._is_ev(t), t)
 
+    def test_wide_pair_beside_the_shop(self):
+        # (coverage, 2026-10-27: 123 of the 131 real stations missed had a shop, no canopy, and no room for a pump pair
+        # straight between the shop and its nearest road) the forecourt beside the shop, the way to the road in front
+        # of it blocked by another building: the wider search finds the open ground
+        st = gs.Station("st", 0.0, 40.0, "Shell", "Shell", ("p",), True, True)
+        shop = rect("shop", 0.0, 40.0, 20.0, 18.0, cls="retail")
+        front = rect("front", 0.0, 15.0, 30.0, 14.0, cls="retail")             # (between the shop and the road)
+        blds = [shop, front]
+        self.assertIsNone(gs._pair_site(st, shop, blds, ROAD), "today: nothing")
+        self.assertIsNone(gs._pair_site(st, shop, blds, ROAD, at_pin=True))
+        site = gs._wide_pair_site(st, shop, blds, ROAD)
+        self.assertIsNotNone(site)
+        self.assertEqual(len(site.areas), 2)
+        for a in site.areas:
+            p = np.array([a["x"], a["y"]])
+            self.assertLessEqual(np.hypot(*(p - np.array([st.x, st.y]))), gs.WIDE_REACH_M + 1.0)
+            self.assertGreaterEqual(a["y"], 5.0 + gs.ROAD_CLEAR_M - 0.01, a)      # (the road's edge at 5)
+            for b in blds:
+                self.assertFalse(inside_box(b, a["x"], a["y"], pad=0.5), (a, b.id))
+
+    def test_wide_pair_never_across_a_road(self):
+        # the only open ground across a public road from the shop: no station there
+        st = gs.Station("st", 0.0, 40.0, "Shell", "Shell", ("p",), True, True)
+        shop = rect("shop", 0.0, 40.0, 20.0, 18.0, cls="retail")
+        blds = [shop, rect("front", 0.0, 15.0, 30.0, 14.0), rect("west", -25.0, 40.0, 20.0, 60.0),
+                rect("north", 0.0, 75.0, 60.0, 30.0)]
+        roads = ROAD + [(np.array([(18.0, -300.0), (18.0, 300.0)]), 5.0)]       # a street east of the shop
+        self.assertIsNone(gs._wide_pair_site(st, shop, blds, roads))
+
+    def test_wide_pair_reaches_its_road(self):
+        # pumps where a building stands between them and the road they face (a yard behind a block) are no forecourt
+        st = gs.Station("st", 0.0, 40.0, "Shell", "Shell", ("p",), True, True)
+        shop = rect("shop", 0.0, 40.0, 20.0, 18.0, cls="retail")
+        blds = [shop, rect("front", 0.0, 15.0, 110.0, 14.0), rect("west", -27.0, 50.0, 14.0, 30.0),
+                rect("east", 27.0, 50.0, 14.0, 30.0)]           # (open ground only behind the shop, walled from the road)
+        self.assertIsNone(gs._wide_pair_site(st, shop, blds, ROAD))
+
+    def test_wide_pair_gates(self):
+        # only a station that is trusted, fuel-named and no EV charger: the wider search reaches 40 m, so an office
+        # filed as a gas station or a charger would otherwise get pumps
+        shop = rect("shop", 0.0, 40.0, 20.0, 18.0, cls="retail")
+        blds = [shop, rect("front", 0.0, 15.0, 30.0, 14.0, cls="retail")]
+        for why, st in (("untrusted", gs.Station("a", 0.0, 40.0, "Shell", "Shell", ("p",), True, False)),
+                        ("no fuel name", gs.Station("b", 0.0, 40.0, "Ecotuned Technology", "", ("p",), True, True)),
+                        ("an EV charger", gs.Station("c", 0.0, 40.0, "Shell Recharge", "Shell", ("p",), True, True)),
+                        ("a convenience brand", gs.Station("d", 0.0, 40.0, "7-Eleven", "7-Eleven", ("p",), False, True))):
+            self.assertIsNone(gs._wide_pair_site(st, shop, blds, ROAD), why)
+
     def test_fuel_named(self):
         for t in ("Pemex", "BR", "Ipiranga", "Gasolineria San Jeronimo", "ENEOS Dr.Drive 梅田店", "Jx日鉱日石リテールサービス",
                   "北海道エネルギー 札幌大通Ss", "西新橋SS", "Agip Service-Station", "Esso", "Posto de Gasolina Ruckert"):
