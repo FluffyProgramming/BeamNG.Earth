@@ -1233,6 +1233,18 @@ FUEL_WORDS = re.compile(r"\b(oil|petrol\w*|petro|gasolina|gasoline|service[- ]st
                         re.IGNORECASE)
 SS_WORD = re.compile(r"(?<![A-Za-z])(SS|Ss|ＳＳ)(?![A-Za-z])")
 
+# an EV charger filed as a gas station (Shell Recharge, BP Pulse, a Supercharger): no fuel station, so the wider pump
+# search leaves it (_wide_pair_site); phase two's EV chargers take it (the user, 2026-10-27: "don't forget we are
+# planning on adding ev chargers for phase 2")
+EV_WORDS = re.compile(r"\b(recharge|supercharger|ionity|electrify|chargepoint|evgo|ladestation|ladepark|borne de recharge|"
+                      r"punto de recarga|ev charging|ev charger|charging station|allego|fastned|bp pulse|pulse)\b|"
+                      r"зарядн|充電", re.IGNORECASE)
+
+
+def _is_ev(text):
+    """Whether a name says EV charger, not fuel (EV_WORDS)."""
+    return bool(text) and bool(EV_WORDS.search(text))
+
 
 def _fuel_named(text):
     """Whether a name says fuel station: STATION_WORDS, FUEL_WORDS, a Japanese service station's SS, or a fuel brand's

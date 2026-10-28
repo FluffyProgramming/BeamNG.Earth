@@ -575,6 +575,16 @@ class LayoutTest(unittest.TestCase):
         self.assertIsNotNone(gs._one_building_site(gs.Station("en", 0.0, 17.0, "ENEOS", "ENEOS", ("p",), True, True),
                                                    [bld] + tight, ROAD))
 
+    def test_is_ev(self):
+        # (the user, 2026-10-27: "don't forget we are planning on adding ev chargers for phase 2") an EV charger filed as
+        # a gas station is no fuel station: kept out of the fuel layouts' wider search, for the EV part to use
+        for t in ("Shell Recharge", "Tesla Supercharger", "IONITY", "Electrify America", "ChargePoint", "EVgo",
+                  "Ladestation Stadtwerke", "Borne de recharge", "Punto de recarga", "EV Charging Station", "Allego",
+                  "Fastned", "BP Pulse", "Электрозарядная станция", "充電スタンド", "Recharge station"):
+            self.assertTrue(gs._is_ev(t), t)
+        for t in ("Shell", "BP", "Esso Express", "Tesla Motors service", "Charge's Garage", "ENEOS", "", None):
+            self.assertFalse(gs._is_ev(t), t)
+
     def test_fuel_named(self):
         for t in ("Pemex", "BR", "Ipiranga", "Gasolineria San Jeronimo", "ENEOS Dr.Drive 梅田店", "Jx日鉱日石リテールサービス",
                   "北海道エネルギー 札幌大通Ss", "西新橋SS", "Agip Service-Station", "Esso", "Posto de Gasolina Ruckert"):
