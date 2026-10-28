@@ -425,7 +425,10 @@ class LayoutTest(unittest.TestCase):
         # (a kiosk's height: a canopy is taller, ONE_BLD_MIN_H_M, so the one-building rule leaves it a shop)
         shop = rect("shop", 0.0, 13.0, 20.0, 10.0, height=3.5)          # 3 m between the road's edge and the shop
         st = gs.Station("st", 0.0, 13.0, "Shell", "Shell", ("p",), True)
-        self.assertIsNone(gs.layout(st, [shop], ROAD))
+        # (a terraced street: the neighbours either side, so no open ground anywhere near; the wider search would take
+        # an empty test world's)
+        terrace = [rect("w", -20.0, 25.0, 20.0, 34.0), rect("e", 20.0, 25.0, 20.0, 34.0)]
+        self.assertIsNone(gs.layout(st, [shop] + terrace, ROAD))
 
     def test_no_shop_pair_at_the_pin(self):
         # the Agip at Boschetsrieder Str. 162, Munich: the pin on the forecourt, no shop mapped, the road 22 m away
@@ -632,6 +635,30 @@ class LayoutTest(unittest.TestCase):
                         ("an EV charger", gs.Station("c", 0.0, 40.0, "Shell Recharge", "Shell", ("p",), True, True)),
                         ("a convenience brand", gs.Station("d", 0.0, 40.0, "7-Eleven", "7-Eleven", ("p",), False, True))):
             self.assertIsNone(gs._wide_pair_site(st, shop, blds, ROAD), why)
+
+    def test_wide_pair_not_behind_the_shop(self):
+        # (as _pair_site at the pin) a yard behind the shop's back wall is no forecourt: the only open ground there
+        st = gs.Station("st", 0.0, 13.0, "Shell", "Shell", ("p",), True, True)
+        shop = rect("shop", 0.0, 13.0, 20.0, 10.0, cls="retail")
+        blds = [shop, rect("w", -20.0, 13.0, 20.0, 10.0), rect("e", 20.0, 13.0, 20.0, 10.0)]   # (open only behind)
+        self.assertIsNone(gs._wide_pair_site(st, shop, blds, ROAD))
+
+    def test_layout_uses_the_wide_pair_last(self):
+        # every other layout first: the station's own canopy or outline before plain pumps found by the wider search
+        st = gs.Station("st", 0.0, 40.0, "Shell", "Shell", ("p",), True, True)
+        shop = rect("shop", 0.0, 40.0, 20.0, 18.0, cls="retail")
+        blds = [shop, rect("front", 0.0, 15.0, 30.0, 14.0, cls="retail")]
+        self.assertIsNone(gs._layout_core(st, blds, ROAD))
+        site = gs.layout(st, blds, ROAD)
+        self.assertIsNotNone(site, "the wider search, through layout")
+        self.assertEqual((site.drop_ids, site.shop_id), ((), "shop"))
+        self.assertIsNotNone(gs.layout(st, blds, ROAD, style="europe"), "Italy's set too")
+        self.assertIsNotNone(gs.layout(st, blds, ROAD, style="us_east"))
+        # a station mapped as one building keeps its canopy over that building (PR 1), though a pair would fit too
+        en = gs.Station("en", 0.0, 17.0, "ENEOS", "ENEOS", ("p",), True, True)
+        bld = rect("bld", 0.0, 17.0, 20.0, 15.0)
+        tight = [rect("w", -16.0, 25.0, 10.0, 30.0, cls="apartments"), rect("e", 16.0, 25.0, 10.0, 30.0, cls="apartments")]
+        self.assertEqual(gs.layout(en, [bld] + tight, ROAD).drop_ids, ("bld",))
 
     def test_fuel_named(self):
         for t in ("Pemex", "BR", "Ipiranga", "Gasolineria San Jeronimo", "ENEOS Dr.Drive 梅田店", "Jx日鉱日石リテールサービス",

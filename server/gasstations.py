@@ -660,8 +660,9 @@ WIDE_STEP_M = 2.0           # ... on a grid this fine
 def _wide_pair_site(st, shop, blds, roads, kit=None):
     """A pump pair anywhere open within WIDE_REACH_M of the pin, when _pair_site finds none: candidate centres on a
     WIDE_STEP_M grid, nearest to the shop first (else to the pin), each pair facing its own nearest road and clear as
-    _pair_site's (_clear), with no building between it and that road (_walled), never across a public road from the
-    shop (or the pin). Only for a station sure enough for
+    _pair_site's (_clear), with no building between it and that road (_walled), never behind the shop's back wall
+    (its front: toward its nearest road), on its own lot (nearer the shop than any other building: _own_lot) and
+    not across a public road from the shop (or the pin). Only for a station sure enough for
     pumps without a canopy to show it: a gas station (st.confirmed) with a current record (st.trusted), named for fuel
     (_fuel_named) and no EV charger (_is_ev); else None (the 40 m reach would put pumps by an office filed as a gas
     station, or by a charger: phase two's EV part)."""
@@ -681,18 +682,36 @@ def _wide_pair_site(st, shop, blds, roads, kit=None):
     cand = cand[np.argsort(np.hypot(*(cand - sc).T), kind="stable")]
     gr, ga = np.meshgrid(np.linspace(-PAIR_HALF[0], PAIR_HALF[0], 11), np.linspace(-PAIR_HALF[1], PAIR_HALF[1], 9))
     grid = np.c_[gr.ravel(), ga.ravel()]
+    front, back = None, 0.0
+    if shop is not None:                        # (its front: toward its nearest road; nothing behind its back wall)
+        q0, d0, _ = _nearest_on(near_roads, sc)
+        if q0 is not None and d0 >= 1.0:
+            front = (q0 - sc) / d0
+            _, su, shl, shw = _obox(shop.ring)
+            back = -float(abs(su @ front) * shl + abs(su[0] * front[1] - su[1] * front[0]) * shw)
     for c in cand:
         q, d, _ = _nearest_on(near_roads, c)
         if q is None or d < 1.0:
             continue
         a = (q - c) / d
         r = np.array([-a[1], a[0]])
-        if not _clear(c + grid[:, :1] * r + grid[:, 1:] * a, blds, near_roads):
+        foot = c + grid[:, :1] * r + grid[:, 1:] * a
+        if front is not None and float(((foot - sc) @ front).min()) < back:
             continue
-        if _across(sc, c, roads) or _walled(c, q, blds):
+        if not _clear(foot, blds, near_roads):
+            continue
+        if _across(sc, c, roads) or _walled(c, q, blds) or (shop is not None and not _own_lot(c, shop, blds)):
             continue
         return _pair_at(st, c, a, r, kit)
     return None
+
+
+def _own_lot(c, shop, blds):
+    """Whether c is nearer the shop than any other building (the station's own ground, not a neighbour's lot)."""
+    d = lambda b: float(_seg_dist(c[None], b.ring[:-1], b.ring[1:])[0])      # noqa: E731
+    mine = d(shop)
+    return all(d(b) >= mine for b in blds if b is not shop and b.id != shop.id
+               and (np.abs(b.ring - c).min(0) <= mine).all())
 
 
 def _walled(c, q, blds):
@@ -1406,10 +1425,16 @@ def _one_building_site(st, blds, roads, service=(), style="default"):
 
 def _layout(st, blds, roads, service=(), style="default"):
     """The station's forecourt (_layout_core); failing that, a station mapped as one building around its pin
-    (_one_building_site): only where nothing else is laid out, so no station that has a forecourt today changes."""
+    (_one_building_site); failing that, a pump pair anywhere open near the pin (_wide_pair_site): each only where
+    nothing before it is laid out, so no station that has a forecourt today changes."""
     site = _layout_core(st, blds, roads, service, style)
     if site is None:
         site = _one_building_site(st, blds, roads, service, style)
+    if site is None:
+        shop = find_shop(st, blds) or _home_shop(st, blds, roads)
+        site = _wide_pair_site(st, shop, blds, roads, ITA_KIT if style == "europe" else PUMP_KIT)
+        if site is not None:
+            site.shop_id = shop.id if shop is not None else "pin:" + st.id
     return site
 
 
