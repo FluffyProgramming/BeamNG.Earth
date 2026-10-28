@@ -700,6 +700,18 @@ class LayoutTest(unittest.TestCase):
                       [dict(x=300.0, y=0.0)], (), shop_id="pin:small", pad=[])
         self.assertEqual(sorted(k.station.id for k in gs._one_per_shop([far, sb])), ["big", "small"])
 
+    def test_far_store_only_with_its_canopy(self):
+        # (the 968-station comparison: a pin-only station in Paris and one in Berlin re-keyed to a big city building whose
+        # wall was within 60 m) a store found by its wall is the shop only when the station's canopy is mapped beside it
+        st = gs.Station("st", 0.0, 20.0, "Total", "Total", ("p",), True, True)
+        store = rect("store", 0.0, 84.0, 100.0, 50.0, cls="retail")            # 5000 m2, its wall at y = 59
+        site = gs.layout(st, [store], ROAD)
+        self.assertIsNotNone(site)
+        self.assertTrue(site.shop_id.startswith("pin:"), site.shop_id)            # (as before: pumps at the pin)
+        roof = rect("roof", 0.0, 45.0, 30.0, 18.0, cls="roof")                  # its canopy, between the pin and the store
+        site = gs.layout(st, [store, roof], ROAD)
+        self.assertEqual((site.shop_id, site.drop_ids), ("store", ("roof",)))
+
     def test_fuel_named(self):
         for t in ("Pemex", "BR", "Ipiranga", "Gasolineria San Jeronimo", "ENEOS Dr.Drive 梅田店", "Jx日鉱日石リテールサービス",
                   "北海道エネルギー 札幌大通Ss", "西新橋SS", "Agip Service-Station", "Esso", "Posto de Gasolina Ruckert"):

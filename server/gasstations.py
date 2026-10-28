@@ -1487,6 +1487,16 @@ def _one_building_site(st, blds, roads, service=(), style="default"):
     return site
 
 
+def _station_shop(st, blds, roads):
+    """find_shop's shop, but a travel centre's store found only by its wall (beyond SHOP_SEARCH_M by its centre) only
+    with the station's canopy mapped beside it (find_canopies): else a big city building near a pin-only station
+    became its shop (Paris, Berlin in the 968-station comparison, 2026-10-27)."""
+    shop = find_shop(st, blds)
+    if shop is not None and float(np.hypot(*(_centre(shop.ring) - np.array([st.x, st.y])))) > SHOP_SEARCH_M             and not find_canopies(st, shop, blds, roads):
+        return None
+    return shop
+
+
 def _layout(st, blds, roads, service=(), style="default"):
     """The station's forecourt (_layout_core); failing that, a station mapped as one building around its pin
     (_one_building_site); failing that, a pump pair anywhere open near the pin (_wide_pair_site): each only where
@@ -1495,7 +1505,7 @@ def _layout(st, blds, roads, service=(), style="default"):
     if site is None:
         site = _one_building_site(st, blds, roads, service, style)
     if site is None:
-        shop = find_shop(st, blds) or _home_shop(st, blds, roads)
+        shop = _station_shop(st, blds, roads) or _home_shop(st, blds, roads)
         site = _wide_pair_site(st, shop, blds, roads, ITA_KIT if style == "europe" else PUMP_KIT)
         if site is not None:
             site.shop_id = shop.id if shop is not None else "pin:" + st.id
@@ -1508,7 +1518,7 @@ def _layout_core(st, blds, roads, service=(), style="default"):
     _outline_lanes): islands between them under a roof slab (_lane_site); else a pump pair clear of roads and
     buildings. A canopy outline found is dropped from the buildings either way. A convenience brand alone (not
     st.confirmed) needs the lanes or the canopy."""
-    shop = find_shop(st, blds)
+    shop = _station_shop(st, blds, roads)
     if shop is None:                            # (a shop mapped as a home, beside its canopy: _home_shop)
         shop = _home_shop(st, blds, roads)
     if shop is None:                            # (a kiosk not mapped: the pin is on the forecourt)
