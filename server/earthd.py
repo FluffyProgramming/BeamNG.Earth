@@ -572,6 +572,8 @@ def road_tracker(conn):
 
 
 OSM_FUEL_THREADS = 2     # OpenStreetMap fuel cells fetched at once (Server.osm_fuel_want)
+OSM_FUEL_WARM_TRIES = 10    # the start's index read tried this often (Server._osm_fuel_warm) ...
+OSM_FUEL_WARM_WAIT_S = 30.0  # ... this far apart
 
 
 def osm_fuel_cells(frame, tile, geo=False):
@@ -1721,13 +1723,20 @@ class Server:
         log.info("ground photo %d px (settings)", px)
         return True
 
-    def _osm_fuel_warm(self):
-        try:
-            t0 = time.perf_counter()
-            self.mapdata.osm_fuel_warm()
-            log.info("osm fuel: the file's index read in %.1f s", time.perf_counter() - t0)
-        except Exception as e:
-            log.warning("osm fuel: the file's index: %s: %s", type(e).__name__, e)
+    def _osm_fuel_warm(self, sleep=time.sleep):
+        """Worker thread: the OSM fuel file's index read at the start, tried again every OSM_FUEL_WARM_WAIT_S when the
+        host turns it away (in game, 2026-10-29: "busy, prefetch dropped", "bucket low" while the start's road tags
+        took both slots), up to OSM_FUEL_WARM_TRIES times (then the first cell reads it)."""
+        for i in range(OSM_FUEL_WARM_TRIES):
+            try:
+                t0 = time.perf_counter()
+                self.mapdata.osm_fuel_warm()
+                log.info("osm fuel: the file's index read in %.1f s", time.perf_counter() - t0)
+                return
+            except Exception as e:
+                log.info("osm fuel: the file's index (try %d): %s: %s", i + 1, type(e).__name__, e)
+                if i + 1 < OSM_FUEL_WARM_TRIES:
+                    sleep(OSM_FUEL_WARM_WAIT_S)
 
     def osm_fuel_want(self, conn, aid, tiles):
         """The OpenStreetMap fuel cells of road tiles (tx, ty) of anchor aid (their stations' reach) fetched in the

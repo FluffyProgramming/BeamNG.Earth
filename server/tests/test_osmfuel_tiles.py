@@ -28,5 +28,25 @@ class OsmFuelTilesTest(unittest.TestCase):
         self.assertEqual(t.sent, {(1, 0), (5, 5)}, "built again at the next pose (no roads_drop: the mod replaces it)")
 
 
+    def test_index_read_retried(self):
+        # (in game, 2026-10-29: the startup index read refused twice: "busy, prefetch dropped", "bucket low") tried
+        # again every OSM_FUEL_WARM_WAIT_S, up to OSM_FUEL_WARM_TRIES times
+        import earthd
+        calls = []
+
+        class MD:
+            def osm_fuel_warm(self):
+                calls.append(1)
+                if len(calls) < 3:
+                    raise IOError("busy, prefetch dropped")
+
+        class S:
+            mapdata = MD()
+        slept = []
+        earthd.Server._osm_fuel_warm(S(), sleep=slept.append)
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(slept, [earthd.OSM_FUEL_WARM_WAIT_S] * 2)
+
+
 if __name__ == "__main__":
     unittest.main()
