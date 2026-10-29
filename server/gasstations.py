@@ -101,6 +101,7 @@ class Station:
     pins: tuple
     confirmed: bool     # a gas_station pin or a fuel brand; else a convenience brand that needs a canopy
     trusted: bool = True    # its records current (TRUST_CONF): a station mapped as one building needs it
+    osm: bool = False       # OpenStreetMap has a fuel station here (with_osm): confirmed, and named for fuel by it
 
 
 def pins(frame, layers):
@@ -206,6 +207,33 @@ def merge(ps, merge_m=MERGE_M):
                            any(p.confidence >= TRUST_CONF or p.src in TRUST_SOURCES for p in g)
                            or len({p.src for p in g}) >= 2))
     return sorted(out, key=lambda s: s.id)
+
+
+OSM_CONFIRM_M = 60.0    # an OpenStreetMap fuel station this near a listing is that station (as MERGE_M)
+
+
+def with_osm(stations, osm):
+    """The stations with OpenStreetMap's fuel stations (osm: [{"id", "x", "y", "name", "brand"}] in the stations' frame,
+    from osmfuel.py) folded in: a listing within OSM_CONFIRM_M of one is confirmed, trusted and marked osm (a single
+    old listing, or a convenience store's, that OSM tags as a fuel station); one with no listing near is a station of
+    its own ("osm" + its id, the same in every road tile), named from OSM (the user, 2026-10-28: "lets test OSM if it
+    is too laggy we will revert": 142 of 600 OSM fuel stations in the 54 test places were not listed at all)."""
+    if not osm:
+        return list(stations)
+    out, used = [], set()
+    for st in stations:
+        near = [o for o in osm if math.hypot(o["x"] - st.x, o["y"] - st.y) <= OSM_CONFIRM_M]
+        if near:
+            used.update(o["id"] for o in near)
+            st = Station(st.id, st.x, st.y, st.name, st.brand, st.pins, True, True, True)
+        out.append(st)
+    for o in osm:
+        if o["id"] in used or any(math.hypot(o["x"] - s.x, o["y"] - s.y) <= OSM_CONFIRM_M for s in out):
+            continue
+        name = o.get("name") or o.get("brand") or "Gas station"
+        out.append(Station("osm%x" % int(o["id"]), float(o["x"]), float(o["y"]), name, o.get("brand") or "",
+                           ("osm:%d" % int(o["id"]),), True, True, True))
+    return out
 
 
 # --- the shop and the canopy -------------------------------------------------------------------------------------
@@ -679,7 +707,7 @@ def _wide_pair_site(st, shop, blds, roads, kit=None):
     phase two's EV part). The candidates are screened together on a raster of the obstacles (_obstacle_raster: a
     failing search tried every one, 38 -> 221 ms of layouts a road tile in Athens), and only the ones left are checked
     exactly, in order."""
-    if not (st.confirmed and st.trusted and (_fuel_named(st.name) or _fuel_named(st.brand)))             or _is_ev(st.name) or _is_ev(st.brand):
+    if not (st.confirmed and st.trusted and (st.osm or _fuel_named(st.name) or _fuel_named(st.brand)))             or _is_ev(st.name) or _is_ev(st.brand):
         return None
     kit = kit or PUMP_KIT
     pin = np.array([st.x, st.y])
@@ -1461,7 +1489,7 @@ def _one_building_site(st, blds, roads, service=(), style="default"):
     roof or across a public road), else the station is keyed by its own outline (one station per shop, _one_per_shop:
     a block farther off is no shop of its, and two stations near it must not hide each other). The canopy stands back
     from the sides that face a public road (_off_the_sidewalk)."""
-    if not st.confirmed or not st.trusted or not (_fuel_named(st.name) or _fuel_named(st.brand)):
+    if not st.confirmed or not st.trusted or not (st.osm or _fuel_named(st.name) or _fuel_named(st.brand)):
         return None
     b = _pin_building(st, blds)
     if b is None:
@@ -1702,6 +1730,13 @@ def _record(site, frame, elev):
                       for k, a in enumerate(site.areas)]}
 
 
+def station_cells(frame, tx, ty):
+    """The map cells of the stations a road tile lays out (tile_sites): round the tile by the farthest reach and the
+    merge distance. Also the cells whose OpenStreetMap fuel stations it reads (earthd osm_fuel_cells)."""
+    import roads
+    return roads.cells_of_tile(frame, tx, ty, margin=TRAVEL_REACH_M + MERGE_M)
+
+
 def tile_sites(frame, tx, ty, md, elev, cuts=None, pads=None):
     """(records of the stations whose position lies in road tile (tx, ty), ids of the canopy outlines to leave out of
     its buildings): every station within its reach_of of the tile is laid out, so a canopy whose centroid (buildings.py's
@@ -1714,9 +1749,16 @@ def tile_sites(frame, tx, ty, md, elev, cuts=None, pads=None):
     box = roads.tile_bbox(tx, ty)
     x0, y0, x1, y1 = box
     try:
-        keys = roads.cells_of_tile(frame, tx, ty, margin=TRAVEL_REACH_M + MERGE_M)
+        keys = station_cells(frame, tx, ty)
         places = [md.cell(k, layers=("places",), kind="demand").layers.get("places") for k in keys]
         stations = merge(pins(frame, places))
+        osm_cached = getattr(md, "osm_fuel_cached", None)       # (OpenStreetMap's: cached cells only, never waited for)
+        if osm_cached is not None:
+            osm = [osm_cached(k) for k in keys]
+            if any(rows is None for rows in osm):   # (a cell not fetched yet: this tile is built again when it comes,
+                import revisit                      # and this build is not kept for the next visit)
+                revisit.fault()
+            stations = with_osm(stations, _osm_points(frame, osm))
     except Exception as e:      # an unreachable source costs the stations, not the tile
         log.debug("gas stations of road tile %s_%s: %s", tx, ty, e)
         return [], frozenset()
@@ -1757,6 +1799,22 @@ def _pad_ll(polys, frame):
     for poly in polys:
         la, lo, _ = frame.enu_to_geodetic(poly[:, 0], poly[:, 1], np.zeros(len(poly)))
         out.append((np.round(np.asarray(la, np.float64), 7), np.round(np.asarray(lo, np.float64), 7)))
+    return out
+
+
+def _osm_points(frame, cells):
+    """[{"id", "x", "y", "name", "brand"}] in frame of the cached OSM cells' fuel stations (osmfuel rows; None: a cell
+    not fetched yet), each once (a station in two cells), at its bbox's centre."""
+    out, seen = [], set()
+    for rows in cells:
+        for r in rows or ():
+            if r["id"] in seen:
+                continue
+            seen.add(r["id"])
+            x0, y0, x1, y1 = r["bbox"]
+            e, n, _ = frame.geodetic_to_enu((y0 + y1) / 2, (x0 + x1) / 2, 0.0)
+            out.append({"id": r["id"], "x": float(e), "y": float(n), "name": r.get("name") or "",
+                        "brand": r.get("brand") or ""})
     return out
 
 

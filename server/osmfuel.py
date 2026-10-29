@@ -7,9 +7,6 @@ columns to find the cell's fuel rows, then names, brand, building and geometry o
 Unreachable: no OSM stations (the caller goes on with Overture's).
 """
 import logging
-import struct
-
-import numpy as np
 
 import osmtags
 import rangeread
@@ -19,7 +16,8 @@ log = logging.getLogger("earthd.osmfuel")
 URL = "https://data.openstreetmap.us/layercake/pois.parquet"
 PATH = "osm/pois.parquet"
 FIND = ("id", "bbox", "amenity")                        # step 1: the cell's fuel rows
-DETAIL = ("brand", "name", "building", "geometry")      # step 2: of the row groups that have any
+DETAIL = ("brand", "name", "building")                 # step 2: of the row groups that have any (no geometry:
+                                                       # its chunks were most of 1-6 MB a cell; bbox is enough)
 
 
 class OsmFuel(osmtags.OsmTags):
@@ -31,7 +29,7 @@ class OsmFuel(osmtags.OsmTags):
         super().__init__(raw_dir, fetcher, url)
 
     def cell(self, bounds, kind="demand"):
-        """[{"id", "brand", "name", "building", "point": (lon, lat) | None, "ring": (k, 2) lon/lat | None}] of the fuel
+        """[{"id", "brand", "name", "building", "bbox": (lon0, lat0, lon1, lat1)}] of the fuel
         stations whose bbox touches bounds (lon0, lat0, lon1, lat1). A version that changed under the reads is dropped
         and the cell asked once more on the new one."""
         for attempt in (0, 1):
@@ -72,7 +70,8 @@ class OsmFuel(osmtags.OsmTags):
                 con.execute("SET enable_geoparquet_conversion = false")
             except Exception:
                 pass
-            rows = con.execute(f"""SELECT id, brand, name, building, geometry FROM read_parquet({uri},
+            rows = con.execute(f"""SELECT id, brand, name, building, bbox.xmin, bbox.ymin, bbox.xmax, bbox.ymax
+                FROM read_parquet({uri},
                 file_row_number = true) WHERE file_row_number IN ({', '.join(map(str, hits))})""").fetchall()
         except Exception:
             for e in errors:
@@ -82,38 +81,12 @@ class OsmFuel(osmtags.OsmTags):
         finally:
             con.close()
         out = []
-        for fid, brand, name, building, geom in rows:
-            shape = _wkb(bytes(geom)) if geom is not None else None
-            if shape is None:
+        for fid, brand, name, building, x0, y0, x1, y1 in rows:
+            if x0 is None:
                 continue
             if isinstance(name, (list, tuple)):
                 name = name[0] if name else None
             out.append({"id": int(fid), "brand": brand or "", "name": name or "", "building": building or "",
-                        "point": shape if isinstance(shape, tuple) else None,
-                        "ring": shape if isinstance(shape, np.ndarray) else None})
+                        "bbox": (float(x0), float(y0), float(x1), float(y1))})
         return out
 
-
-def _wkb(b):
-    """A WKB Point as (lon, lat), a Polygon or MultiPolygon as its (first) outer ring (k, 2); else None."""
-    try:
-        end = "<" if b[0] == 1 else ">"
-        kind = struct.unpack(end + "I", b[1:5])[0] % 1000
-        if kind == 1:
-            x, y = struct.unpack(end + "dd", b[5:21])
-            return (x, y)
-        if kind == 3:
-            return _ring(b, 5, end)
-        if kind == 6:
-            return _wkb(b[9:])                          # (its first polygon)
-    except (struct.error, IndexError):
-        pass
-    return None
-
-
-def _ring(b, o, end):
-    nrings = struct.unpack(end + "I", b[o:o + 4])[0]
-    if nrings < 1:
-        return None
-    n = struct.unpack(end + "I", b[o + 4:o + 8])[0]
-    return np.frombuffer(b, dtype=np.dtype(end + "f8"), count=2 * n, offset=o + 8).reshape(n, 2).copy()

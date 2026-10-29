@@ -571,6 +571,24 @@ def road_tracker(conn):
     return roadsmod.GeoTracker() if getattr(conn, "road_geo", False) else roadsmod.Tracker()
 
 
+OSM_FUEL_THREADS = 2     # OpenStreetMap fuel cells fetched at once (Server.osm_fuel_want)
+
+
+def osm_fuel_cells(frame, tile, geo=False):
+    """The map cells whose OpenStreetMap fuel stations a road tile's layouts read (gasstations.station_cells): tile
+    (tx, ty) of anchor frame, or geotile (gx, gy) with geo (its own frame; frame unused)."""
+    if geo:
+        import geotiles
+        return gasstationsmod.station_cells(geotiles.frame(*tile), geotiles.geobox(*tile), None)
+    return gasstationsmod.station_cells(frame, tile[0], tile[1])
+
+
+def osm_fuel_tiles(frame, key, tiles, geo=False):
+    """The road tiles among tiles whose stations reach map cell key (osm_fuel_cells)."""
+    k = str(key)
+    return {t for t in tiles if any(str(c) == k for c in osm_fuel_cells(frame, t, geo))}
+
+
 class Server:
     def __init__(self, user_dir, cache_dir, tile_workers=3, kfun=None,
                  hysteresis=farfield.HYSTERESIS, radius=farfield.RADIUS, far_format="cdae",
@@ -805,6 +823,14 @@ class Server:
         # (the settings page's switch turns them off and on again: set_gas_stations; never on without the flag)
         self.gas_allowed = bool(gas_stations) and mapdata is not None
         self.gas_stations = self.gas_allowed
+        # OpenStreetMap's fuel stations (osmfuel.py, the OSM test: the user, 2026-10-28, "lets test OSM if it is too laggy
+        # we will revert"): fetched in the background per cell around the road tiles the car wants, never waited for; a
+        # cell with stations that came after its tiles were sent sends them again (osm_fuel_want)
+        self.osm_fuel = None
+        if self.gas_allowed and mapdatamod.OSM_FUEL and hasattr(mapdata, "osm_fuel_fetch"):
+            self.osm_fuel = ThreadPoolExecutor(OSM_FUEL_THREADS, thread_name_prefix="osm-fuel")
+            self.osm_fuel_done, self.osm_fuel_wait = set(), {}
+            self.osm_fuel.submit(self._osm_fuel_warm)
         if self.gas_stations and surface is not None and hasattr(surface, "gas_pads"):
             surface.gas_pads = True     # their forecourts painted asphalt (surface.Surface.fuel_pads)
         self.traffic = bool(traffic) and mapdata is not None   # the AI road graph around the player (navgraph.py)
@@ -1694,6 +1720,64 @@ class Server:
             self.base_stale.update(k for k in self.hm if k[0] in self.anchors)
         log.info("ground photo %d px (settings)", px)
         return True
+
+    def _osm_fuel_warm(self):
+        try:
+            t0 = time.perf_counter()
+            self.mapdata.osm_fuel_warm()
+            log.info("osm fuel: the file's index read in %.1f s", time.perf_counter() - t0)
+        except Exception as e:
+            log.warning("osm fuel: the file's index: %s: %s", type(e).__name__, e)
+
+    def osm_fuel_want(self, conn, aid, tiles):
+        """The OpenStreetMap fuel cells of road tiles (tx, ty) of anchor aid (their stations' reach) fetched in the
+        background, each once; one with stations that comes after conn sent a tile it reaches has that tile built again
+        (osm_fuel_tiles, roads.Tracker.again)."""
+        anchor = self.anchors.get(aid)
+        if self.osm_fuel is None or anchor is None or not self.gas_stations:
+            return
+        loop = asyncio.get_running_loop()
+        for tx, ty in tiles:
+            for key in roadsmod.cells_of_tile(anchor.frame, tx, ty, margin=gasstationsmod.REACH_M + gasstationsmod.MERGE_M):
+                k = str(key)
+                if k in self.osm_fuel_done:
+                    continue
+                waiting = self.osm_fuel_wait.get(k)
+                if waiting is not None:
+                    waiting.add((conn, aid))
+                    continue
+                self.osm_fuel_wait[k] = {(conn, aid)}
+                fut = self.osm_fuel.submit(self._osm_fuel_cell, key)
+                fut.add_done_callback(lambda f, k=k, key=key: loop.call_soon_threadsafe(self._osm_fuel_got, k, key, f))
+
+    def _osm_fuel_cell(self, key):
+        """Worker thread: the cell's OSM fuel stations, from the disk when fetched before."""
+        rows = self.mapdata.osm_fuel_cached(key)
+        if rows is not None:
+            return rows, False
+        t0 = time.perf_counter()
+        rows = self.mapdata.osm_fuel_fetch(key)
+        log.debug("osm fuel: cell %s, %d stations in %.2f s", key, len(rows), time.perf_counter() - t0)
+        return rows, True
+
+    def _osm_fuel_got(self, k, key, fut):
+        waiting = self.osm_fuel_wait.pop(k, set())
+        try:
+            rows, fetched = fut.result()
+        except Exception as e:          # (asked again with the next pose that wants it)
+            log.debug("osm fuel: cell %s: %s: %s", k, type(e).__name__, e)
+            return
+        self.osm_fuel_done.add(k)
+        if not rows or not fetched:     # (a cell from the disk was there when its tiles were built)
+            return
+        for conn, aid in waiting:
+            anchor = self.anchors.get(aid)
+            roads = getattr(conn, "roads", None)
+            if anchor is not None and roads is not None and roads.aid == aid:
+                again = osm_fuel_tiles(anchor.frame, key, roads.sent)
+                if again:
+                    log.info("osm fuel: cell %s brought %d stations: road tiles %s again", k, len(rows), sorted(again))
+                    roads.again(again)
 
     def keep_fuel_pads(self, pads):
         """A road tile's gas station pads kept for the ground's painters (surface.Surface.add_fuel_pads); the blocks
@@ -4599,6 +4683,7 @@ class Connection:
                                    vel=self.vel, ground_busy=self.terrain_wait > 0, view=self.view_at,
                                    foci=self.foci)
                 ready = self.roads.sent
+            self.s.osm_fuel_want(self, aid, getattr(self.roads, "car", ()))   # (OpenStreetMap's fuel stations)
             source = getattr(self.s.mapdata, "highway_signs", None)
             if source is not None and self.signs_on:      # (after the roads: signs only for road tiles sent)
                 self.signs.on_pose(self, aid, *self.focus, asyncio.get_running_loop(), self.s.build_signs_tile,

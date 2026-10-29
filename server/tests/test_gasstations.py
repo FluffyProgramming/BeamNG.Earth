@@ -712,6 +712,28 @@ class LayoutTest(unittest.TestCase):
         site = gs.layout(st, [store, roof], ROAD)
         self.assertEqual((site.shop_id, site.drop_ids), ("store", ("roof",)))
 
+    def test_with_osm(self):
+        # (the OSM test, 2026-10-28: "lets test OSM if it is too laggy we will revert") OpenStreetMap's fuel stations
+        # (osmfuel.py) confirm a listing within OSM_CONFIRM_M and are stations themselves where nothing is listed
+        lone = gs.Station("lone", 0.0, 0.0, "Shell", "Shell", ("p",), True, False)            # a single old listing
+        shop = gs.Station("shop", 200.0, 0.0, "7-Eleven", "7-Eleven", ("q",), False, True)  # (the station's shop)
+        far = gs.Station("far", 600.0, 0.0, "BP", "BP", ("r",), True, False)
+        osm = [dict(id=11, x=20.0, y=5.0, name="Shell", brand="Shell"), dict(id=12, x=210.0, y=0.0, name="", brand="Exxon"),
+               dict(id=13, x=400.0, y=0.0, name="Liberty", brand="")]
+        got = {s.id: s for s in gs.with_osm([lone, shop, far], osm)}
+        self.assertTrue(got["lone"].trusted and got["lone"].osm, "confirmed by OSM")
+        self.assertTrue(got["shop"].confirmed and got["shop"].osm, "a convenience listing on OSM's fuel station")
+        self.assertFalse(got["far"].trusted or got["far"].osm, "nothing near: as it was")
+        extra = [s for s in got.values() if s.id.startswith("osm")]
+        self.assertEqual(len(extra), 1)
+        e = extra[0]
+        self.assertEqual((e.x, e.y, e.name, e.confirmed, e.trusted, e.osm), (400.0, 0.0, "Liberty", True, True, True))
+        self.assertEqual(gs.with_osm([lone], [])[0], lone, "no OSM: nothing changes")
+        # an OSM-confirmed station passes the wider search's name gate (OSM tagged it a fuel station)
+        st = gs.Station("o", 0.0, 40.0, "Liberty", "", ("p",), True, True, True)
+        shop_b = rect("shop", 0.0, 40.0, 20.0, 18.0, cls="retail")
+        self.assertIsNotNone(gs._wide_pair_site(st, shop_b, [shop_b, rect("front", 0.0, 15.0, 30.0, 14.0)], ROAD))
+
     def test_fuel_named(self):
         for t in ("Pemex", "BR", "Ipiranga", "Gasolineria San Jeronimo", "ENEOS Dr.Drive 梅田店", "Jx日鉱日石リテールサービス",
                   "北海道エネルギー 札幌大通Ss", "西新橋SS", "Agip Service-Station", "Esso", "Posto de Gasolina Ruckert"):
@@ -1248,6 +1270,22 @@ class TileTest(unittest.TestCase):
         _, skip_o = gs.tile_sites(FRAME, 0, 0, md_for("Sunoco"), flat)
         self.assertNotIn(far, skip_o, "another brand: as before (beyond REACH_M)")
         self.assertIn("b-roof3", skip_o)
+
+    def test_tile_sites_osm_only_station(self):
+        # (the OSM test) a fuel station OpenStreetMap has and no listing does: laid out from OSM's cached cell
+        # (MapData.osm_fuel_cached; None: not fetched yet, the tile goes on without it)
+        md = station_md()
+        md.all["places"] = feats("places", [], mg.POINT)
+        self.assertEqual(gs.tile_sites(FRAME, 0, 0, md, flat)[0], [], "no listing, no OSM: nothing")
+        la, lo, _ = FRAME.enu_to_geodetic(240.0, 100.0, 0.0)
+        row = {"id": 99, "brand": "Liberty", "name": "Liberty", "building": "",
+               "bbox": (float(lo) - 1e-5, float(la) - 1e-5, float(lo) + 1e-5, float(la) + 1e-5)}
+        md.osm_fuel_cached = lambda key: [row]
+        recs, skip = gs.tile_sites(FRAME, 0, 0, md, flat)
+        self.assertEqual([r["name"] for r in recs], ["Liberty"])
+        self.assertIn("b-roof", skip)
+        md.osm_fuel_cached = lambda key: None
+        self.assertEqual(gs.tile_sites(FRAME, 0, 0, md, flat)[0], [], "not fetched yet: as without OSM")
 
     def test_no_places_layer_no_stations(self):
         self.assertEqual(gs.tile_sites(FRAME, 0, 0, station_md(fail=("places",)), flat), ([], frozenset()))

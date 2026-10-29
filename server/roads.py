@@ -7198,6 +7198,11 @@ class Tracker:
         if self.pool is not None:
             self.pool.shutdown(wait=False, cancel_futures=True)
 
+    def again(self, keys):
+        """The sent tiles among keys built again at the next pose and sent again (no roads_drop: the mod replaces a
+        tile it has; the OSM test: a cell's OpenStreetMap fuel stations came after them, earthd Server.osm_fuel_want)."""
+        self.sent -= set(keys)
+
     def progress(self):
         """(done, wanted) of the road tiles round the car at the last pose: done = sent to the mod, empty, or failed
         and waiting for its retry (nothing more comes for it now). (0, 0) before a pose."""

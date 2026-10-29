@@ -76,6 +76,8 @@ log = logging.getLogger("earthd.mapdata")
 
 LAYER_THREADS = 4               # layers of a cell built at once (each fetches through the shared limits)
 OSM_THREADS = 8                 # cells whose OpenStreetMap tags are read at once (alongside their Overture roads)
+OSM_FUEL = os.environ.get("BNGE_OSM_FUEL", "1") != "0"     # OpenStreetMap's fuel stations per cell (osmfuel.py; the
+                                # user, 2026-10-28: "lets test OSM if it is too laggy we will revert")
 # (cell, layer)s built ahead at once by warm() (a fresh place's first road tile asked for ~70 of them one after another:
 # 56 s in Marseille, GitHub #241): half the CPUs, at most 8, and none on 8 or fewer: each is a DuckDB query and a
 # decode of its own, and on a Steam Deck (4 cores, 8 threads) the work done ahead kept the CPUs from the road tiles
@@ -312,7 +314,8 @@ class MapData:
         return {"pipeline": VERSION, "overture": self.release, "worldcover": maprasters.WORLDCOVER_RELEASE,
                 "canopy": maprasters.CHM_RELEASE, "rails": rails.known() if rails is not None else None,
                 "lanes": lanes.known() if lanes is not None else None,
-                "gradesep": (gradesep.VERSION, gradesep.MODE) if gradesep.TUNNELS else None}
+                "gradesep": (gradesep.VERSION, gradesep.MODE) if gradesep.TUNNELS else None,
+                "osmfuel": OSM_FUEL}
 
     def path(self, key, layer):
         source, release = _source(layer, self.release)
@@ -449,6 +452,53 @@ class MapData:
         except Exception as e:          # optional: the roads go on with their guesses
             log.warning("mapdata: OSM road tags of %s: %s: %s", key, type(e).__name__, e)
             return {}, []
+
+    def osm_fuel_path(self, key):
+        return os.path.join(self.raw_dir, "osmfuel_cells", f"{_key(key)}.json")
+
+    def osm_fuel_cached(self, key):
+        """The cell's OpenStreetMap fuel stations (osmfuel.OsmFuel.cell rows) as fetched by osm_fuel_fetch, or None when
+        not fetched yet: the road tiles' workers only read them, never wait for them (the server fetches them in the
+        background and sends the tiles again: earthd Server.osm_fuel_want). [] when off."""
+        if not OSM_FUEL:
+            return []
+        try:
+            with open(self.osm_fuel_path(key), encoding="utf-8") as f:
+                rows = json.load(f)
+        except (OSError, ValueError):
+            return None
+        for r in rows:
+            r["bbox"] = tuple(r["bbox"])
+        return rows
+
+    def osm_fuel_fetch(self, key, kind="prefetch"):
+        """Worker thread: the cell's OpenStreetMap fuel stations fetched (osmfuel.py) and kept on disk (none too: the
+        cell is not asked again); [] when off or without a fetcher. The source's errors are raised (asked again)."""
+        import osmfuel
+        if not OSM_FUEL or self.fetcher is None:
+            return []
+        with self._lock:
+            if getattr(self, "osmfuel", None) is None:
+                self.osmfuel = osmfuel.OsmFuel(self.raw_dir, self.fetcher)
+        rows = self.osmfuel.cell(_key(key).bounds(), kind)
+        path = self.osm_fuel_path(key)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = f"{path}.{os.getpid()}.tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(rows, f)
+        os.replace(tmp, path)
+        return rows
+
+    def osm_fuel_warm(self, kind="prefetch"):
+        """Worker thread: the OSM fuel file's version and row-group index read once (about 40 s the first time a week:
+        at the server's start, so no cell waits for it)."""
+        import osmfuel
+        if not OSM_FUEL or self.fetcher is None:
+            return
+        with self._lock:
+            if getattr(self, "osmfuel", None) is None:
+                self.osmfuel = osmfuel.OsmFuel(self.raw_dir, self.fetcher)
+        self.osmfuel.cell((0.0, 0.0, 1e-6, 1e-6), kind)
 
     @staticmethod
     def _osm(feats, got):
