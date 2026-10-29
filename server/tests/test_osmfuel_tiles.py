@@ -27,6 +27,48 @@ class OsmFuelTilesTest(unittest.TestCase):
         t.again({(0, 0), (9, 9)})
         self.assertEqual(t.sent, {(1, 0), (5, 5)}, "built again at the next pose (no roads_drop: the mod replaces it)")
 
+    def test_geotiles_of_cell(self):
+        # (dev's road geotiles: a geotile's cells are its stations' reach round its own box)
+        import earthd
+        import geotiles
+        frame = geodesy.EnuFrame(40.44, -80.0)
+        key = next(iter(mapcells.cells_for_bbox(40.44, -80.0, 40.4401, -79.9999)))
+        here = {(a, b) for a, b, _ in geotiles.tiles_near(frame, 0.0, 0.0, 1.0)}
+        far = {(a, b) for a, b, _ in geotiles.tiles_near(frame, 20000.0, 20000.0, 1.0)}
+        near = earthd.osm_fuel_tiles(frame, key, here | far, geo=True)
+        self.assertTrue(here <= near)
+        self.assertFalse(far & near, "20 km off")
+
+    def test_geo_tracker_again(self):
+        # a sent geotile given again: its content and this anchor's skin built at the next pose (no roads_drop: the
+        # mod replaces a geotile whose content hash changed)
+        import geotiles
+        frame = geodesy.EnuFrame(40.44, -80.0)
+        jobs = []
+
+        class Loop:
+            def run_in_executor(self, pool, fn, *args):
+                jobs.append(args)
+
+                class F:
+                    def add_done_callback(self, cb):
+                        pass
+                return F()
+        t = roads.GeoTracker()
+        t.frame, t.aid = frame, 1
+        t.frames[1] = frame
+        car = set(roads.geo_wanted(frame, 0.0, 0.0, 0.0, 0.0))
+        t.sent, t.skins = set(car), set(car)
+        for k in car:
+            t.need[(k, 1)] = {}
+        k = sorted(car)[0]
+        t.again({k, (10 ** 6, 10 ** 6)})
+        self.assertNotIn(k, t.sent)
+        t.on_pose(None, 1, 0.0, 0.0, Loop(), None, frame=frame)
+        t.close()
+        self.assertEqual([(a[1], a[2], a[3], a[4]) for a in jobs], [(k[0], k[1], True, True)])
+        self.assertTrue(all(isinstance(g, int) for g in k) and geotiles.key(*k))
+
 
     def test_index_read_retried(self):
         # (in game, 2026-10-29: the startup index read refused twice: "busy, prefetch dropped", "bucket low") tried

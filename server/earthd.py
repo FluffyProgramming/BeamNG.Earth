@@ -1739,15 +1739,17 @@ class Server:
                     sleep(OSM_FUEL_WARM_WAIT_S)
 
     def osm_fuel_want(self, conn, aid, tiles):
-        """The OpenStreetMap fuel cells of road tiles (tx, ty) of anchor aid (their stations' reach) fetched in the
-        background, each once; one with stations that comes after conn sent a tile it reaches has that tile built again
-        (osm_fuel_tiles, roads.Tracker.again)."""
+        """The OpenStreetMap fuel cells of road tiles of anchor aid (tx, ty), or of road geotiles (gx, gy) when conn's
+        tracker is roads.GeoTracker (their stations' reach: osm_fuel_cells), fetched in the background, each once; one
+        with stations that comes after conn sent a tile it reaches has that tile built again (osm_fuel_tiles,
+        roads.Tracker.again / GeoTracker.again)."""
         anchor = self.anchors.get(aid)
         if self.osm_fuel is None or anchor is None or not self.gas_stations:
             return
+        geo = getattr(getattr(conn, "roads", None), "geo", False)
         loop = asyncio.get_running_loop()
-        for tx, ty in tiles:
-            for key in roadsmod.cells_of_tile(anchor.frame, tx, ty, margin=gasstationsmod.REACH_M + gasstationsmod.MERGE_M):
+        for t in tiles:
+            for key in osm_fuel_cells(anchor.frame, t, geo):
                 k = str(key)
                 if k in self.osm_fuel_done:
                     continue
@@ -1782,8 +1784,11 @@ class Server:
         for conn, aid in waiting:
             anchor = self.anchors.get(aid)
             roads = getattr(conn, "roads", None)
-            if anchor is not None and roads is not None and roads.aid == aid:
-                again = osm_fuel_tiles(anchor.frame, key, roads.sent)
+            geo = getattr(roads, "geo", False)
+            # (a geotile's content is the connection's, whatever the anchor: dev's geotiles, kept by the mod across
+            # anchors; an anchor's road tiles only while it is the tracker's)
+            if anchor is not None and roads is not None and (geo or roads.aid == aid):
+                again = osm_fuel_tiles(anchor.frame, key, roads.sent, geo)
                 if again:
                     log.info("osm fuel: cell %s brought %d stations: road tiles %s again", k, len(rows), sorted(again))
                     roads.again(again)

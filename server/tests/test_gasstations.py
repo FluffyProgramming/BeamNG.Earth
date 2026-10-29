@@ -1287,6 +1287,20 @@ class TileTest(unittest.TestCase):
         md.osm_fuel_cached = lambda key: None
         self.assertEqual(gs.tile_sites(FRAME, 0, 0, md, flat)[0], [], "not fetched yet: as without OSM")
 
+    def test_tile_sites_unfetched_osm_cell_not_kept(self):
+        # a road tile built while one of its OSM cells is not fetched yet is not kept for the next visit (revisit.fault:
+        # it is built again when the cell comes, earthd Server.osm_fuel_want); with every cell fetched it is
+        import revisit
+        md = station_md()
+        md.osm_fuel_cached = lambda key: None
+        f0 = revisit.faults()
+        gs.tile_sites(FRAME, 0, 0, md, flat)
+        self.assertGreater(revisit.faults(), f0)
+        md.osm_fuel_cached = lambda key: []
+        f0 = revisit.faults()
+        gs.tile_sites(FRAME, 0, 0, md, flat)
+        self.assertEqual(revisit.faults(), f0)
+
     def test_no_places_layer_no_stations(self):
         self.assertEqual(gs.tile_sites(FRAME, 0, 0, station_md(fail=("places",)), flat), ([], frozenset()))
 

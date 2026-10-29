@@ -53,7 +53,7 @@ class OsmFuelCacheTest(unittest.TestCase):
         old = mapdata.OSM_FUEL
         mapdata.OSM_FUEL = False
         try:
-            self.assertIsNone(self.md.osm_fuel_cached(self.key), "BNGE_OSM_FUEL=0: as without OSM")
+            self.assertEqual(self.md.osm_fuel_cached(self.key), [], "BNGE_OSM_FUEL=0: none (not \"not fetched\")")
             self.assertEqual(self.md.osm_fuel_fetch(self.key), [])
         finally:
             mapdata.OSM_FUEL = old
