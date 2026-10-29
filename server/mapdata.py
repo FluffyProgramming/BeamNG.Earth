@@ -487,6 +487,11 @@ class MapData:
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(rows, f)
         os.replace(tmp, path)
+        now = time.monotonic()
+        if now - getattr(self, "_osm_pruned", -1e9) >= osmfuel.PRUNE_EVERY_S and hasattr(self.osmfuel, "version"):
+            self._osm_pruned = now                  # (its blocks under a cap)
+            _, remote = self.osmfuel.version(kind)
+            osmfuel.prune_blocks(remote.cache_dir, remote.size)
         return rows
 
     def osm_fuel_warm(self, kind="prefetch"):

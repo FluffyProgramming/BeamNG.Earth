@@ -15,6 +15,9 @@ log = logging.getLogger("earthd.osmfuel")
 
 URL = "https://data.openstreetmap.us/layercake/pois.parquet"
 PATH = "osm/pois.parquet"
+BLOCKS_CAP = 64 * 1024 * 1024       # the POI file's cached blocks kept (prune_blocks: 461 MB for 54 places without it)
+KEEP_TAIL = 16 * 1024 * 1024        # ... besides its last 16 MB: the footer (row-group index, 4.9 MB; 40 s to read again)
+PRUNE_EVERY_S = 30.0                # (MapData.osm_fuel_fetch prunes at most this often)
 FIND = ("id", "bbox", "amenity")                        # step 1: the cell's fuel rows
 DETAIL = ("brand", "name", "building")                 # step 2: of the row groups that have any (no geometry:
                                                        # its chunks were most of 1-6 MB a cell; bbox is enough)
@@ -90,3 +93,40 @@ class OsmFuel(osmtags.OsmTags):
                         "bbox": (float(x0), float(y0), float(x1), float(y1))})
         return out
 
+
+
+def prune_blocks(d, size, cap=BLOCKS_CAP, keep_tail=KEEP_TAIL, block=rangeread.BLOCK):
+    """The cached blocks in folder d of a size-byte file (rangeread's "<i>.blk") kept under cap, the oldest (by mtime)
+    deleted first; the blocks of its last keep_tail bytes (the footer) never. A cell's stations are kept apart
+    (MapData.osm_fuel_cached): a block is only worth keeping for the next cells of the same row groups."""
+    import os
+    first_tail = max(0, (size - keep_tail) // block)
+    body = []
+    try:
+        names = os.listdir(d)
+    except OSError:
+        return
+    for n in names:
+        if not n.endswith(".blk"):
+            continue
+        try:
+            i = int(n[:-4])
+        except ValueError:
+            continue
+        if i >= first_tail:
+            continue
+        p = os.path.join(d, n)
+        try:
+            st = os.stat(p)
+        except OSError:
+            continue
+        body.append((st.st_mtime, st.st_size, p))
+    total = sum(b[1] for b in body)
+    for _, sz, p in sorted(body):
+        if total <= cap:
+            break
+        try:
+            os.remove(p)
+            total -= sz
+        except OSError:
+            pass

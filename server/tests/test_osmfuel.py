@@ -59,5 +59,28 @@ class OsmFuelCacheTest(unittest.TestCase):
             mapdata.OSM_FUEL = old
 
 
+
+class OsmFuelBlocksTest(unittest.TestCase):
+    """(the OSM test: 461 MB of the POI file's blocks for 54 places, 2026-10-28) the block cache kept under a cap, oldest
+    first; the file's footer (its row-group index: 40 s to read again) never pruned."""
+
+    def test_prune(self):
+        import osmfuel
+        d = tempfile.mkdtemp()
+        B = 1000
+        for i in range(30):                         # blocks 0..29 of a 30 000-byte file, block 29 the newest
+            path = os.path.join(d, f"{i}.blk")
+            with open(path, "wb") as f:
+                f.write(b"x" * B)
+            os.utime(path, (1000 + i, 1000 + i))
+        osmfuel.prune_blocks(d, size=30 * B, cap=10 * B, keep_tail=5 * B, block=B)
+        left = sorted(int(f[:-4]) for f in os.listdir(d))
+        self.assertTrue(set(range(25, 30)) <= set(left), "the footer's blocks kept")
+        body = [i for i in left if i < 25]
+        self.assertLessEqual(len(body) * B, 10 * B)
+        self.assertEqual(body, sorted(body)[-len(body):] if body else [], "(the newest kept)")
+        self.assertEqual(body, list(range(25 - len(body), 25)))
+
+
 if __name__ == "__main__":
     unittest.main()
