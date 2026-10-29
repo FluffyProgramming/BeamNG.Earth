@@ -1214,6 +1214,41 @@ class TileTest(unittest.TestCase):
         self.assertTrue(any(p["shape"].endswith("eca_gastation_pumps.DAE") for p in recs[0]["props"]))     # (us_east)
         self.assertEqual(len(gs.service_lines(FRAME, [md.all["roads"]], 240.0, 100.0, 100.0)), 4)
 
+    def test_reach_of(self):
+        def st(name, brand=""):
+            return gs.Station("s", 0.0, 0.0, name, brand, (), True)
+        for name, brand in (("Buc-ee's", ""), ("Buc-ee’s", ""), ("Bucees", ""), ("Love's Travel Stop", ""),
+                            ("Pilot Travel Center", ""), ("", "Flying J"), ("TravelCenters of America", ""),
+                            ("Petro Stopping Center", ""), ("Sapp Bros.", "")):
+            self.assertEqual(gs.reach_of(st(name, brand)), gs.TRAVEL_REACH_M, name or brand)
+        for name in ("Sunoco", "Shell", "Pilots' Lounge", "Love Lane Gas", "Sheetz"):
+            self.assertEqual(gs.reach_of(st(name)), gs.REACH_M, name)
+
+    def test_travel_centre_reach(self):
+        # (the user, 2026-10-29: "bucees is cooked, one canopy spawns fine the second of the three spawns but the
+        # building draws over it and the third canopy is a building") a travel centre's canopies reach farther than
+        # REACH_M from its pin (Mount Crawford: 134 m): it is laid out with TRAVEL_REACH_M, and so is every road tile
+        # holding one of them (its outline left out there); another brand is as before
+        x0, _, x1, _ = roads.tile_bbox(0, 0)
+        def md_for(name):
+            places = feats("places", [("pla-1", (100.0, 130.0), {"basic_category": "gas_station", "name": name,
+                                                                 "operating_status": "open"})], mg.POINT)
+            rows = [("b-shop", box_ring(100.0, 100.0, 40.0, 30.0), {"class": "retail", "src_dataset": "OpenStreetMap"})]
+            for k, y in enumerate((140.0, 175.0, 210.0, 245.0, 280.0)):         # a chain of roofs 15 m apart
+                rows.append((f"b-roof{k}", box_ring(100.0, y, 30.0, 20.0), {"class": "roof", "src_dataset": "OpenStreetMap"}))
+            blds = feats("buildings", rows, mg.POLYGON)
+            rds = feats("roads", [("r-1", [(170.0, -200.0), (170.0, 600.0)], {"class": "secondary"})], mg.LINE)
+            return FakeMD({"places": places, "buildings": blds, "roads": rds})
+        far = "b-roof4"                                                      # (its centre 150 m from the pin, tile (0, 1))
+        _, skip_b = gs.tile_sites(FRAME, 0, 1, md_for("Buc-ee's"), flat)
+        self.assertIn(far, skip_b, "the travel centre's far canopy left out of its own tile's buildings")
+        recs, skip0 = gs.tile_sites(FRAME, 0, 0, md_for("Buc-ee's"), flat)
+        self.assertEqual(len(recs), 1)
+        self.assertIn(far, skip0)
+        _, skip_o = gs.tile_sites(FRAME, 0, 0, md_for("Sunoco"), flat)
+        self.assertNotIn(far, skip_o, "another brand: as before (beyond REACH_M)")
+        self.assertIn("b-roof3", skip_o)
+
     def test_no_places_layer_no_stations(self):
         self.assertEqual(gs.tile_sites(FRAME, 0, 0, station_md(fail=("places",)), flat), ([], frozenset()))
 

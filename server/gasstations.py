@@ -1660,6 +1660,18 @@ def service_lines(frame, layers, x, y, r):
 
 
 REACH_M = SHOP_SEARCH_M + CANOPY_SEARCH_M + 10.0    # a station's canopy is within this of its position
+# (the user, 2026-10-29: "bucees is cooked, one canopy spawns fine the second of the three spawns but the building draws
+# over it and the third canopy is a building") a travel centre's rows of canopies reach farther (Mount Crawford's
+# Buc-ee's: its third 134 m from the pin): its brands are laid out with TRAVEL_REACH_M, by every road tile it reaches
+TRAVEL_REACH_M = 200.0
+TRAVEL_WORDS = re.compile(r"(?<![A-Za-z])(buc-?ee['’]?s|love['’]?s travel|pilot travel|flying j|travelcenters? of america|"
+                          r"petro stopping|sapp bros)(?![A-Za-z])", re.I)
+
+
+def reach_of(st):
+    """How far from its position a station's buildings are looked for, and which road tiles lay it out (tile_sites):
+    TRAVEL_REACH_M for a travel centre's brand or name, else REACH_M."""
+    return TRAVEL_REACH_M if TRAVEL_WORDS.search(f"{st.brand or ''} {st.name or ''}") else REACH_M
 
 
 def _cells_near(frame, x, y, r):
@@ -1692,7 +1704,7 @@ def _record(site, frame, elev):
 
 def tile_sites(frame, tx, ty, md, elev, cuts=None, pads=None):
     """(records of the stations whose position lies in road tile (tx, ty), ids of the canopy outlines to leave out of
-    its buildings): every station within REACH_M of the tile is laid out, so a canopy whose centroid (buildings.py's
+    its buildings): every station within its reach_of of the tile is laid out, so a canopy whose centroid (buildings.py's
     owner rule) is in this tile is dropped here even when its station is the neighbour's. md: mapdata.MapData;
     elev(lat, lon) the physics ground. cuts: a list that gets every laid-out station's made-up driveways
     (Site.drives: roads.build_tile walk_cuts, the sidewalks they cross cut; a neighbour tile's station's too). pads: a
@@ -1702,7 +1714,7 @@ def tile_sites(frame, tx, ty, md, elev, cuts=None, pads=None):
     box = roads.tile_bbox(tx, ty)
     x0, y0, x1, y1 = box
     try:
-        keys = roads.cells_of_tile(frame, tx, ty, margin=REACH_M + MERGE_M)
+        keys = roads.cells_of_tile(frame, tx, ty, margin=TRAVEL_REACH_M + MERGE_M)
         places = [md.cell(k, layers=("places",), kind="demand").layers.get("places") for k in keys]
         stations = merge(pins(frame, places))
     except Exception as e:      # an unreachable source costs the stations, not the tile
@@ -1710,16 +1722,17 @@ def tile_sites(frame, tx, ty, md, elev, cuts=None, pads=None):
         return [], frozenset()
     sites = []
     for st in stations:
-        if not (x0 - REACH_M <= st.x < x1 + REACH_M and y0 - REACH_M <= st.y < y1 + REACH_M):
+        r = reach_of(st)
+        if not (x0 - r <= st.x < x1 + r and y0 - r <= st.y < y1 + r):
             continue
         try:
             cds = [md.cell(k, layers=("buildings", "roads"), kind="demand")
-                   for k in _cells_near(frame, st.x, st.y, REACH_M)]
+                   for k in _cells_near(frame, st.x, st.y, r)]
             rls = [c.layers.get("roads") for c in cds]
             la, lo, _ = frame.enu_to_geodetic(st.x, st.y, 0.0)
-            site = layout(st, buildings_near(frame, [c.layers.get("buildings") for c in cds], st.x, st.y, REACH_M),
-                          drive_lines(frame, rls, st.x, st.y, REACH_M + 50.0),
-                          service_lines(frame, rls, st.x, st.y, REACH_M), style_of(float(la), float(lo)))
+            site = layout(st, buildings_near(frame, [c.layers.get("buildings") for c in cds], st.x, st.y, r),
+                          drive_lines(frame, rls, st.x, st.y, r + 50.0),
+                          service_lines(frame, rls, st.x, st.y, r), style_of(float(la), float(lo)))
         except Exception as e:
             log.debug("gas station %s: %s", st.id, e)
             continue
