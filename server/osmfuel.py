@@ -65,6 +65,16 @@ class OsmFuel(osmtags.OsmTags):
                 self._forget()
         return []
 
+    def warm(self, kind="prefetch"):
+        """The pinned version and its row groups' index (the footer, 4.9 MB) read, nothing else: no cell (2026-10-29:
+        a cell at (0, 0) was 1342 requests and 414 MB, turned away ten times as prefetch)."""
+        etag, remote = self.version(kind)
+        con, proto, errors = self._reader._connect({PATH: remote}, kind)
+        try:
+            self._groups(con, f"'{proto}://{PATH}'", remote, kind)
+        finally:
+            con.close()
+
     def _fuel(self, remote, bounds, kind):
         lon0, lat0, lon1, lat1 = bounds
         rd = self._reader
@@ -81,8 +91,10 @@ class OsmFuel(osmtags.OsmTags):
                                f"{groups[rg]['first'] + groups[rg]['n'] - 1}" for rg in cand)
             box = (f"bbox.xmin <= {lon1!r} AND bbox.xmax >= {lon0!r} AND bbox.ymin <= {lat1!r} "
                    f"AND bbox.ymax >= {lat0!r}")
-            hits = [int(r[0]) for r in con.execute(f"""SELECT file_row_number FROM read_parquet({uri},
-                file_row_number = true) WHERE ({only}) AND {box} AND amenity = 'fuel'""").fetchall()]
+            # amenity compared here, not in the query: amenity = 'fuel' there made DuckDB read the amenity bloom filter
+            # of each of the file's 509 row groups, block by block (2026-10-29: 133 of a cell's 144 requests, 35 MB)
+            hits = [int(r[0]) for r in con.execute(f"""SELECT file_row_number, amenity FROM read_parquet({uri},
+                file_row_number = true) WHERE ({only}) AND {box}""").fetchall() if r[1] == "fuel"]
             if not hits:
                 return []
             hit = sorted({rg for r in hits for rg in cand

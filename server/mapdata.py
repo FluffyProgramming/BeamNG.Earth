@@ -497,15 +497,15 @@ class MapData:
         return rows
 
     def osm_fuel_warm(self, kind="prefetch"):
-        """Worker thread: the OSM fuel file's version and row-group index read once (about 40 s the first time a week:
-        at the server's start, so no cell waits for it)."""
+        """Worker thread: the OSM fuel file's version and row-group index read once (3 requests, 5 MB, about 1 s the
+        first time a version: at the server's start, so no cell waits for it)."""
         import osmfuel
         if not OSM_FUEL or self.fetcher is None:
             return
         with self._lock:
             if getattr(self, "osmfuel", None) is None:
                 self.osmfuel = osmfuel.OsmFuel(self.raw_dir, self.fetcher)
-        self.osmfuel.cell((0.0, 0.0, 1e-6, 1e-6), kind)
+        self.osmfuel.warm(kind)
 
     @staticmethod
     def _osm(feats, got):
