@@ -60,6 +60,33 @@ class OsmFuelCacheTest(unittest.TestCase):
 
 
 
+class OsmFuelBudgetTest(unittest.TestCase):
+    """(the OSM test: OSM fuel shares data.openstreetmap.us's daily budget with the road tags, osmtags.py) it stops at
+    OSM_FUEL_SHARE of the budget so the roads' lanes, widths and sidewalks always have the rest."""
+
+    def test_share(self):
+        import netfetch
+        import osmfuel
+
+        class F:
+            policies = {osmfuel.HOST: netfetch.HostPolicy(daily_budget=5000)}
+
+            def __init__(self, used):
+                self.used = used
+
+            def snapshot(self):
+                return {osmfuel.HOST: {"requests": self.used}}
+        self.assertTrue(osmfuel.budget_ok(F(100)))
+        self.assertFalse(osmfuel.budget_ok(F(int(5000 * osmfuel.OSM_FUEL_SHARE))))
+        md = mapdata.MapData(tempfile.mkdtemp(), fetcher=F(4999))
+        md.osmfuel = FakeOsm([{"id": 1, "brand": "", "name": "", "building": "", "bbox": (0, 0, 0, 0)}])
+        key = next(iter(mapcells.cells_for_bbox(40.44, -80.0, 40.441, -79.999)))
+        with self.assertRaises(osmfuel.OverShare):
+            md.osm_fuel_fetch(key)
+        self.assertEqual(md.osmfuel.calls, 0, "no request")
+        self.assertIsNone(md.osm_fuel_cached(key), "not kept: asked again tomorrow")
+
+
 class OsmFuelBlocksTest(unittest.TestCase):
     """(the OSM test: 461 MB of the POI file's blocks for 54 places, 2026-10-28) the block cache kept under a cap, oldest
     first; the file's footer (its row-group index: 40 s to read again) never pruned."""

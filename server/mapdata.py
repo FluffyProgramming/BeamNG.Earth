@@ -480,6 +480,8 @@ class MapData:
         with self._lock:
             if getattr(self, "osmfuel", None) is None:
                 self.osmfuel = osmfuel.OsmFuel(self.raw_dir, self.fetcher)
+        if not osmfuel.budget_ok(self.fetcher):         # (the road tags first: the host's budget is shared)
+            raise osmfuel.OverShare(f"OSM fuel: past {osmfuel.OSM_FUEL_SHARE:.0%} of {osmfuel.HOST}'s daily budget")
         rows = self.osmfuel.cell(_key(key).bounds(), kind)
         path = self.osm_fuel_path(key)
         os.makedirs(os.path.dirname(path), exist_ok=True)

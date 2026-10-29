@@ -14,12 +14,31 @@ import rangeread
 log = logging.getLogger("earthd.osmfuel")
 
 URL = "https://data.openstreetmap.us/layercake/pois.parquet"
+HOST = "data.openstreetmap.us"
+OSM_FUEL_SHARE = 0.5        # of the host's daily requests budget: past it no OSM fuel cell is fetched that day (the
+                            # road tags, osmtags.py, share the host and its budget: lanes, widths, sidewalks first)
+
+
+class OverShare(rangeread.RangeError):
+    """OSM fuel's share of the host's daily budget is used up (budget_ok): the cell is asked again later."""
+
+
+def budget_ok(fetcher, share=OSM_FUEL_SHARE):
+    """Whether today's requests to HOST are under share of its daily budget (netfetch's own stops prefetch at 80 %:
+    this leaves the road tags most of it)."""
+    pol = getattr(fetcher, "policies", {}).get(HOST)
+    b = getattr(pol, "daily_budget", None)
+    if not b:
+        return True
+    used = (fetcher.snapshot().get(HOST) or {}).get("requests", 0)
+    return used < share * b
 PATH = "osm/pois.parquet"
 BLOCKS_CAP = 64 * 1024 * 1024       # the POI file's cached blocks kept (prune_blocks: 461 MB for 54 places without it)
 KEEP_TAIL = 16 * 1024 * 1024        # ... besides its last 16 MB: the footer (row-group index, 4.9 MB; 40 s to read again)
 PRUNE_EVERY_S = 30.0                # (MapData.osm_fuel_fetch prunes at most this often)
-FIND = ("id", "bbox", "amenity")                        # step 1: the cell's fuel rows
-DETAIL = ("brand", "name", "building")                 # step 2: of the row groups that have any (no geometry:
+FIND = ("bbox", "amenity")                              # step 1: the cell's fuel rows (no id: a third of
+                                                        # the bytes; ids with the names in step 2)
+DETAIL = ("id", "brand", "name", "building")           # step 2: of the row groups that have any (no geometry:
                                                        # its chunks were most of 1-6 MB a cell; bbox is enough)
 
 
