@@ -123,8 +123,8 @@ def pins(frame, layers):
                 continue
             c = classify(col("basic_category", i), col("taxonomy", i), col("brand_wikidata", i),
                          col("operating_status", i) or None, col("brand_name", i))
-            if c is None:
-                continue
+            if c is None or _is_ev(col("name", i)) or _is_ev(col("brand_name", i)):
+                continue        # (a charger filed as a gas station is a charger site: evchargers.charger_pins)
             seen.add(fid)
             if xy is None:
                 xy = f.xy_in(frame)
