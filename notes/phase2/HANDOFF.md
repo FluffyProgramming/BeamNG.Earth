@@ -6,12 +6,14 @@ without that commit; or `git rm -r notes && git commit` on top before the rebase
 
 ## Where things are
 
-- **PR #502** (OSM fuel stations + wider pump search + travel centres): open, rebased on `dev` 1.7.2-beta (8375d51),
-  head 47c414d on the fork's `feature/gas-station-coverage`, MERGEABLE. Waiting for TecnaGamer to merge.
-- **This branch, `feature/ev-chargers`**: 11 commits on top of #502's 47c414d (EV chargers), plus this notes commit.
-  Decision (2026-10-30): wait for #502 to merge, then rebase onto `dev` and post the EV PR. The PR text is
-  `pr_ev.md` here; its `SCREENSHOT:` placeholders need the images pushed to a screenshots branch on the fork (like
-  `pr-gas-coverage-screenshots`), and it needs the user's read and "post" before it goes up.
+- **PR #502** (OSM fuel stations + wider pump search + travel centres): MERGED into `dev` 2026-11-03 (55e4750).
+- **This branch, `feature/ev-chargers`**: rebased onto `dev` 2026-11-03 (7198d96, 57 commits past the #502 merge);
+  13 commits + this notes commit. Rebase notes: dev's `gasstations._candidates` (fuel candidates once per places layer)
+  took the charger exclusion in `pins()`; `_ev_candidates` does the same for chargers; dev's osmtags keeps the parsed
+  footer in the file's cache folder (the charger read test gives it one). Next: drop this notes commit, show the user
+  `pr_ev.md` (rebase note: now on dev, not on #502), push screenshots, post only on their "post".
+  The PR text is `pr_ev.md` here; its `SCREENSHOT:` placeholders need the images pushed to a screenshots branch on the
+  fork (like `pr-gas-coverage-screenshots`).
 - Screenshots for the PR are on the Windows PC (scratchpad): `ev_barstow_supercharger.jpg`, `ev_berlin_street4.jpg`,
   `ev_berlin_charging.jpg` (and `ev_barstow_supercharger_wide.jpg`, `ev_berlin_post.jpg`). Re-take them in game if
   needed: Barstow CA Supercharger 34.849129, -117.085449 (a row of 8); Berlin e.on Drive kerb chargers near
