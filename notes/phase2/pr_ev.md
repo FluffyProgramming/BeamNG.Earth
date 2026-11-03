@@ -1,6 +1,6 @@
 **Title:** EV chargers with charging (real chargers from Overture and OpenStreetMap, the stock charge prompt)
 
-Hi! Players have been asking for EV charging. This places real charging stations with the game's own charger models, and an electric car charges there through the stock prompt, the same way #401's pumps refuel. Builds on #502 (it reuses its OpenStreetMap reader); I'll rebase onto `dev` once that's in.
+Hi! Players have been asking for EV charging. This places real charging stations with the game's own charger models, and an electric car charges there through the stock prompt, the same way #401's pumps refuel. Follows #502: it reuses that PR's OpenStreetMap reader. Based on current `dev`.
 
 ## Charging uses the stock gas station module
 
@@ -31,6 +31,6 @@ The records go out with the station records, with `"energy": ["electricEnergy"]`
 ## Checks
 
 - **Unit tests:** `server/tests/test_evchargers.py` covers sites from both sources and their merge, sizes, the aisle row, the kerb, shortening, a charger in a garage, a long building over the pin, one record per site across tiles, a charger beside a station, and missing data. `test_osmfuel.py` reads charging stations without a bloom filter read. `mod/tests/test_gasstations.lua` checks a charger's energy reaching the stock POI.
-- **Gas stations unchanged:** the 64 test places (54 cities and #401's 10 areas, 969 listings), #502 vs this branch: 963 laid out identically. The other 6 are the chargers filed as gas stations above.
+- **Gas stations unchanged:** the 64 test places (54 cities and #401's 10 areas, 969 listings), #502's code vs this branch: 963 laid out identically. The other 6 are the chargers filed as gas stations above.
 - **Chargers, 8 sample places** (Denver, Los Angeles, Utrecht, Oslo, Berlin, Tokyo, São Paulo, Sydney): 236 of 267 sites laid out (88 %), 634 chargers; with the driveway rule, Utrecht, Berlin and Oslo went from 229 to 234 of 254. The skipped ones are pins inside buildings. A site's layout takes about 4 ms once its map cells are loaded (about 20 ms on the first site of a cell).
 - **In game** (0.40.3, `BNGE_BUDGET=small`): a Tesla Supercharger in Barstow, CA, as a row of 8; Berlin's street chargers on the kerb; an electric car parked at e.on Drive's charged 10 % → 100 % through the stock prompt; Utrecht's dense chargers spawned with no hitches from them and no Lua errors.
